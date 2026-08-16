@@ -46,6 +46,10 @@ A Lexia 3 (PSA dealer interface, USB `103a:f008`) is driven directly through lib
 
 The protocol was reverse-engineered by running DiagBox in a VM, passing the Lexia through to it, and capturing the USB traffic with `sniff_lexia_usb.py`, which parses `/dev/usbmon1` binary packets directly (64-byte header struct, filtered to bulk transfers with data). That capture is checked in as `lexia_usb.log` - 5500 packets in `timestamp,type,direction,endpoint,device,length,hex_data` form. It is the ground truth for every magic hex string in the Lexia scripts; re-read it before changing them.
 
+**The device handshake is mandatory and was the missing piece for years.** Sending the session frame `400915c000fe...39` cold makes the device answer with status byte `0x0C` (byte 18 of the reply) and nothing works afterwards. Before any vehicle traffic, DiagBox runs 11 device-level commands that read the interface's own firmware strings (`011113A`, `921815  C/t`, `BOOT1_PSA_XS__ P107441- V1.0.3 @ACTIA`, `APPLI_XS_Fuji_ P106138A V4.3.7 @ACTIA`). Only then does the `fe` frame return status `0x01` and the link to the car come up. That sequence is captured verbatim in `lexia_boot.DEVICE_BOOT` and replayed by `Lexia.device_boot()`; `lexia_proto.link_status()` decodes the status byte. The old capture never showed this because it began mid-session.
+
+Two related traps. Every command - including the device-handshake ones - must go through the full poll/fetch cycle below; sending one and reading the reply directly returns the `064009` acknowledgement or a `1540090b` rejection, never the data. And byte 8 of a command frame is a per-session handle, not the constant `01` seen in the old dump: the fresh capture shows `d9`, `35`, `2b`, `aa`, `98`. The checksum rule is unaffected - the last byte still forces the frame's 8-bit sum to `0xFF`, which is the general rule; `(0xBA - id)` only held while every other byte was constant.
+
 Every command follows the same four-step cycle that DiagBox uses:
 
 1. submit the command frame on EP OUT
@@ -57,12 +61,19 @@ Every command follows the same four-step cycle that DiagBox uses:
 
 An actuator command is the fixed prefix `40091bc0ff06060001` padded with zeros, followed by `2f d8 <actuator_id> 03 0a 01 <checksum>`, where `checksum = (0xBA - actuator_id) & 0xFF`. The `2f` is UDS InputOutputControlByIdentifier. Known actuator IDs:
 
-| ID | Light |
-|----|-------|
-| `0x70` | side lights |
-| `0x71` | right indicator |
-| `0x72` | left indicator |
-| `0x75` | brake light |
+| ID | Light | Status on this car |
+|----|-------|--------------------|
+| `0x70` | side lights | reads OK (`62 D870`) |
+| `0x71` | right indicator | reads OK (`62 D871`) |
+| `0x72` | left indicator | reads OK |
+| `0x73` | rear fog | in DiagBox actuator menu |
+| `0x74` | reversing lamps | in DiagBox actuator menu |
+| `0x75` | brake light | reads OK |
+| `0x29`/`0x2A` | dipped beam L/R | **absent** - `7F 22 31` |
+| `0x2B` | **main beam** | **absent** - `7F 22 31` |
+| `0x2C` | front fog | **absent** - `7F 22 31` |
+
+**Settled: this BSI cannot drive the headlamps at all.** Measured with `probe_bsi.py` on 2026-08-16 with a working link: `22 D8 2B` returns `7F 22 31` requestOutOfRange, as do `D829`, `D82A` and `D82C`, while `D870`/`D871` read fine in the very same session - so it is not a chain or session problem, the DIDs genuinely do not exist here. DiagBox agrees: its `BSI2010 LIGHTING - SIGNALLING` actuator list on this car contains only the `D87x` block (side lights, indicators, rear fog, reversing, brake, plus courtesy/boot/black-panel items) and offers no main-beam test. `22 D826` (availability of automatic main/dipped switching) reads `00`, i.e. not available. This matches the DiagBox database, where `MP_COMMANDE_FEUX_DE_ROUTE` (`D82B`) appears only in `MESUREPARAMETRE2E_VARB*` - the AFS/bi-function-headlamp variant - while the confirmed `D87x` ids live in `MESUREPARAMETRE3E`, present in every variant. Do not spend more time on main beam via UDS `2F`; the remaining routes are a MITM on the LS.CAR body bus rewriting the stalk frame, or a relay interposer at the headlamp connector.
 
 The key behavioral constraint that shapes all the "modes": the BSI latches an actuator on for roughly 3 seconds and no off command is known. Blinking is therefore done by re-sending init+actuate faster than that timeout expires, or by firing a different actuator to preempt the current one - that is the whole idea behind `police2.py`'s spam loop and the experiments in `blink_test.py` (which also probes an unconfirmed off variant: trailing byte `00` instead of `01`, checksum incremented).
 
