@@ -1,0 +1,19 @@
+# Стиль повторяет unleash/postgres.yaml из homelab-infra: CloudNativePG уже стоит
+# (apps/cnpg.yaml), поэтому кластер описывается одним ресурсом.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres
+  namespace: citroen
+spec:
+  instances: 1
+  enableSuperuserAccess: true
+  storage:
+    # ~1 ГБ в год при полном снимке раз в 10 с; 20Gi с большим запасом
+    size: 20Gi
+  bootstrap:
+    initdb:
+      database: car
+      owner: car
+      secret:
+        name: citroen-postgres-credentials

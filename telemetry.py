@@ -29,6 +29,7 @@ import time
 import urllib.request
 
 from did_catalog import BY_DID, CATALOG
+from storage import Store
 from lexia_proto import (Lexia, parse_multi, plan_batches, read_did,
                          read_multi_frame)
 
@@ -108,6 +109,7 @@ def main():
     ap.add_argument("--preset", choices=sorted(PRESETS), help="готовый набор")
     ap.add_argument("--hz", type=float, default=1.0, help="частота опроса")
     ap.add_argument("--csv", help="писать в CSV")
+    ap.add_argument("--sqlite", help="писать в локальный SQLite (буфер под sync.py)")
     ap.add_argument("--influx", help="URL InfluxDB, напр. http://localhost:8086")
     ap.add_argument("--db", default="car", help="имя базы для InfluxDB")
     ap.add_argument("--measurement", default="c4", help="measurement для InfluxDB")
@@ -145,6 +147,7 @@ def main():
 
         writer = None
         fh = None
+        store = Store(args.sqlite) if args.sqlite else None
         if args.csv:
             fh = open(args.csv, "w", newline="", buffering=1)
             writer = csv.writer(fh)
@@ -174,6 +177,13 @@ def main():
 
                 if writer:
                     writer.writerow([f"{ts:.3f}"] + row)
+                if store:
+                    entries = BY_DID.get(0) or []
+                    samples = []
+                    for i, d in enumerate(dids):
+                        e = BY_DID.get(d)
+                        samples.append((d, name_of(d), e[0]["unit"] if e else "", row[i]))
+                    store.write(samples, ts=ts)
                 if args.influx:
                     fields = ",".join(
                         f"{name_of(d)}={row[i]}" for i, d in enumerate(dids)
@@ -187,7 +197,7 @@ def main():
                                 data=line.encode(), timeout=2)
                         except Exception as e:
                             log.warning(f"InfluxDB: {e}")
-                if not writer and not args.influx:
+                if not writer and not args.influx and not args.sqlite:
                     print(" | ".join(shown))
 
                 dt = period - (time.time() - t0)
@@ -198,6 +208,9 @@ def main():
         finally:
             if fh:
                 fh.close()
+            if store:
+                log.info(f"SQLite: {store.stats()}")
+                store.close()
     finally:
         lex.disconnect()
     return 0
