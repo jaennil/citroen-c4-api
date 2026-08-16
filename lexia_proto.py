@@ -76,6 +76,45 @@ def read_did(did: int) -> bytes:
     return frame(READ_PREFIX, bytes([0x22, 0xD8, did]))
 
 
+# Максимум DID в одном запросе. Измерено на машине: 10 проходит, 12 отклоняется.
+# Ровно это же число DiagBox показывает как "select up to 10 parameters" - значит
+# ограничение протокольное, а не интерфейса.
+MAX_DIDS_PER_REQUEST = 10
+
+
+def read_frame(payload: bytes) -> bytes:
+    """Кадр чтения произвольной длины: поля длины считаются из нагрузки."""
+    total = 9 + 15 + len(payload) + 1
+    hdr = bytes([0x40, 0x09, total - 4, 0xC0, 0xFF, 0x06, len(payload), 0x00, 0x01])
+    body = hdr + b"\x00" * 15 + payload
+    return body + bytes([checksum(body)])
+
+
+def read_multi_frame(dids) -> bytes:
+    """Один запрос на несколько 16-битных DID: 22 <DID><DID>..."""
+    pl = bytes([0x22]) + b"".join(bytes([(d >> 8) & 0xFF, d & 0xFF]) for d in dids)
+    return read_frame(pl)
+
+
+def parse_multi(payload: bytes, lengths: dict) -> dict:
+    """Разобрать ответ 62 <DID><данные><DID><данные>...
+
+    lengths - сколько байт данных у каждого DID; без этого границы не определить.
+    """
+    out = {}
+    if not payload or payload[0] != 0x62:
+        return out
+    b = payload[1:]
+    i = 0
+    while i + 2 <= len(b):
+        did = (b[i] << 8) | b[i + 1]
+        i += 2
+        ln = lengths.get(did, 1)
+        out[did] = b[i:i + ln]
+        i += ln
+    return out
+
+
 def actuate(did: int, on: bool = True) -> bytes:
     """UDS 2F D8 xx 03 0A 01 - InputOutputControlByIdentifier."""
     return frame(ACT_PREFIX, bytes([0x2F, 0xD8, did, 0x03, 0x0A, 0x01 if on else 0x00]))
