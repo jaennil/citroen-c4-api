@@ -190,17 +190,37 @@ class Lexia:
     def init_session(self):
         return self.transact(bytes.fromhex(INIT_FRAME))
 
-    def read_all(self, timeout=1000) -> bytes:
-        """Ответ может прийти несколькими пакетами (64 + хвост)."""
-        out = bytearray()
-        while True:
-            chunk = self._r(timeout=timeout)
-            if not chunk:
+    # Квитанции и статусы поллинга - не данные, их надо пропускать.
+    ACKS = {bytes.fromhex(x) for x in ("064009", "064000", "064409", "42410901", "42410900")}
+
+    def drain(self, timeout=120):
+        """Выгрести из трубы остатки предыдущей сессии (например, после DiagBox)."""
+        n = 0
+        while self._r(timeout=timeout):
+            n += 1
+            if n > 200:
                 break
+        return n
+
+    def read_all(self, timeout=1200) -> bytes:
+        """Прочитать содержательный ответ, пропуская квитанции.
+
+        Устройство сначала отвечает квитанцией 064009, и только затем присылает
+        сам ответ, возможно несколькими пакетами (64 байта + хвост).
+        """
+        out = bytearray()
+        deadline = time.time() + timeout / 1000.0
+        while time.time() < deadline:
+            chunk = self._r(timeout=400)
+            if not chunk:
+                if out:
+                    break
+                continue
+            if not out and chunk in self.ACKS:
+                continue  # это квитанция, ждём данные
             out += chunk
             if len(chunk) < 64:
                 break
-            timeout = 300
         return bytes(out)
 
     def device_boot(self, verbose=True) -> bool:
@@ -214,17 +234,13 @@ class Lexia:
         from lexia_boot import DEVICE_BOOT
 
         for i, hx in enumerate(DEVICE_BOOT, 1):
-            self._w(bytes.fromhex(hx))
-            time.sleep(0.02)
-            resp = self.read_all()
+            _, resp = self.transact(bytes.fromhex(hx))
             if verbose:
                 txt = "".join(chr(b) if 32 <= b < 127 else "." for b in resp[15:])
-                log.info(f"  dev {i}/{len(DEVICE_BOOT)} cmd={hx[10:12]}: {txt.strip('.') or resp.hex()[:40]}")
+                log.info(f"  dev {i}/{len(DEVICE_BOOT)} cmd={hx[10:12]}: {txt.strip('.') or resp.hex()[:44]}")
 
         # Теперь fe должен ответить успехом
-        self._w(bytes.fromhex(INIT_FRAME))
-        time.sleep(0.02)
-        resp = self.read_all()
+        _, resp = self.transact(bytes.fromhex(INIT_FRAME))
         st, meaning = link_status(resp)
         if verbose:
             log.info(f"  init fe: статус 0x{st:02X} - {meaning}" if st is not None else "  init fe: нет ответа")

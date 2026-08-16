@@ -51,11 +51,9 @@ def main():
         return 1
 
     try:
-        # Сначала проверяем, что Lexia вообще видит машину.
-        _, raw = lex.init_session()
-        st, meaning = link_status(raw)
-        log.info(f"Связь с машиной: статус 0x{st:02X} - {meaning}" if st is not None else "Нет ответа на init")
-        if st is not None and st != 0x01:
+        lex.drain()
+        log.info("Рукопожатие с Lexia (чтение версий прошивки)...")
+        if not lex.device_boot():
             log.error("Lexia отвечает по USB, но машины не видит. Дальше идти бессмысленно:")
             log.error("  - воткнут ли разъём Lexia в OBD (не только USB в ноутбук)?")
             log.error("  - включено ли зажигание?")
