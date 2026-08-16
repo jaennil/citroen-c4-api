@@ -59,7 +59,13 @@ def main():
     log.info("Теперь втыкай Lexia / передавай её в VMware, потом запускай DiagBox.")
     log.info("Не забудь в DiagBox выбрать авто и сделать тест ДАЛЬНЕГО света. Ctrl+C - стоп.")
 
-    rows = []
+    # Пишем на диск сразу, а не копим в памяти: съёмка длинная, и потерять её
+    # из-за kill -9 или падения нельзя.
+    lf = open(out_path, "w", buffering=1)
+    lf.write("# Lexia 3 full USB dump (control+bulk+interrupt, включая пустые)\n")
+    lf.write("# ts,type,xfer,dir,ep,bus,dev,status,length,caplen,setup,data\n")
+
+    n_rows = 0
     counts = {}
     try:
         while True:
@@ -78,27 +84,24 @@ def main():
             # setup-пакет валиден только у control-передач
             setup_hex = setup.hex() if (xfer_type == 2 and flag_setup == b"\x00") else ""
 
-            rows.append((f"{ts_sec}.{ts_usec:06d}", chr(pkt_type), kind, direction,
-                         ep, busnum, devnum, status, length, len(data),
-                         setup_hex, data.hex()))
+            lf.write(",".join(str(x) for x in (
+                f"{ts_sec}.{ts_usec:06d}", chr(pkt_type), kind, direction,
+                ep, busnum, devnum, status, length, len(data),
+                setup_hex, data.hex())) + "\n")
+            n_rows += 1
 
             key = (busnum, devnum, kind)
             counts[key] = counts.get(key, 0) + 1
 
-            if len(rows) % 500 == 0:
-                log.info(f"  ... {len(rows)} пакетов")
+            if n_rows % 500 == 0:
+                log.info(f"  ... {n_rows} пакетов, пишу в {out_path}")
     except KeyboardInterrupt:
         pass
     finally:
         f.close()
+        lf.close()
 
-    with open(out_path, "w") as lf:
-        lf.write("# Lexia 3 full USB dump (control+bulk+interrupt, включая пустые)\n")
-        lf.write("# ts,type,xfer,dir,ep,bus,dev,status,length,caplen,setup,data\n")
-        for r in rows:
-            lf.write(",".join(str(x) for x in r) + "\n")
-
-    log.info(f"Сохранено {len(rows)} пакетов в {out_path}")
+    log.info(f"Сохранено {n_rows} пакетов в {out_path}")
     log.info("Пакетов по (шина, устройство, тип):")
     for (bus, dev, kind), n in sorted(counts.items(), key=lambda x: -x[1])[:15]:
         log.info(f"  bus {bus} dev {dev:3d} {kind:<5} x{n}")

@@ -190,6 +190,46 @@ class Lexia:
     def init_session(self):
         return self.transact(bytes.fromhex(INIT_FRAME))
 
+    def read_all(self, timeout=1000) -> bytes:
+        """Ответ может прийти несколькими пакетами (64 + хвост)."""
+        out = bytearray()
+        while True:
+            chunk = self._r(timeout=timeout)
+            if not chunk:
+                break
+            out += chunk
+            if len(chunk) < 64:
+                break
+            timeout = 300
+        return bytes(out)
+
+    def device_boot(self, verbose=True) -> bool:
+        """Рукопожатие с самой Lexia, до всякой машины.
+
+        Снято из lexia_full.log: DiagBox сначала вычитывает версии загрузчика и
+        прошивки (BOOT1_PSA_XS__, APPLI_XS_Fuji_, ACTIA/921815), и только после
+        этого кадр fe отвечает успехом. Без этой преамбулы fe возвращает статус
+        0x0C, что мы и получали, посылая fe холодным.
+        """
+        from lexia_boot import DEVICE_BOOT
+
+        for i, hx in enumerate(DEVICE_BOOT, 1):
+            self._w(bytes.fromhex(hx))
+            time.sleep(0.02)
+            resp = self.read_all()
+            if verbose:
+                txt = "".join(chr(b) if 32 <= b < 127 else "." for b in resp[15:])
+                log.info(f"  dev {i}/{len(DEVICE_BOOT)} cmd={hx[10:12]}: {txt.strip('.') or resp.hex()[:40]}")
+
+        # Теперь fe должен ответить успехом
+        self._w(bytes.fromhex(INIT_FRAME))
+        time.sleep(0.02)
+        resp = self.read_all()
+        st, meaning = link_status(resp)
+        if verbose:
+            log.info(f"  init fe: статус 0x{st:02X} - {meaning}" if st is not None else "  init fe: нет ответа")
+        return st == 0x01
+
     def boot(self, verbose=True):
         """Полная стартовая процедура DiagBox.
 
