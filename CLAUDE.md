@@ -77,7 +77,11 @@ An actuator command is the fixed prefix `40091bc0ff06060001` padded with zeros, 
 
 The key behavioral constraint that shapes all the "modes": the BSI latches an actuator on for roughly 3 seconds and no off command is known. Blinking is therefore done by re-sending init+actuate faster than that timeout expires, or by firing a different actuator to preempt the current one - that is the whole idea behind `police2.py`'s spam loop and the experiments in `blink_test.py` (which also probes an unconfirmed off variant: trailing byte `00` instead of `01`, checksum incremented).
 
-Actuator tests require ignition ON with the engine OFF.
+**Actuator tests require ignition ON with the engine OFF - measured, not folklore.** A/B tested on 2026-08-16 in one session each. Engine off, ignition on: `2F D8 70` returns `6F D8 70 03` and the side lights physically light. Engine running at ~750 rpm (BSI supply 14.28 V, vehicle speed 0): the identical frame returns `7F 2F 22` conditionsNotCorrect on every attempt, three tries spaced 4 s apart, while `22 D8 70` and `22 D8 71` still read `62 ... 00` in the same session. So the gate is specific to service `2F` and keyed on engine state; the link and the DIDs are fine. An earlier research pass claimed a forum user ran PSA light actuator tests with the engine running and concluded the engine-off rule was an unfounded local convention - that conclusion is wrong for this car.
+
+A second, separate meaning of the same NRC: while an actuator test is already latched, re-sending the same command also returns `7F 2F 22`, and it does **not** extend the latch. So `conditionsNotCorrect` here means either "engine running" or "test already active". To hold a lamp on, re-send just after the ~3 s latch expires (`lights.py` uses `LATCH + 0.25`); re-sending sooner is silently rejected and leaves a brief gap when the latch lapses. This also explains the lone `7F 2F 22` in the original `lexia_usb.log`, which earlier analysis misread as evidence of a general precondition gate.
+
+Vehicle state is readable while the engine runs, which makes tests self-documenting - see `car_state.py`: `22DBA8` engine rpm (factor 0.125), `22DB61` vehicle speed (0.01 km/h), `22DA44` BSI supply voltage (0.001 V), `22DD18` key position, `22DD03` powertrain state. Data begins at index 3 of the `62 D8 xx ...` payload. `22DA46` battery voltage reads `FFFE`, i.e. not available.
 
 ## DBC files
 
