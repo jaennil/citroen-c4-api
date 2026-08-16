@@ -1,12 +1,16 @@
 # Доступ к диагностическим интерфейсам PSA без root.
 #
 # Установка:
-#   sudo cp 99-psa-diag.rules /etc/udev/rules.d/
+#   sudo cp 70-psa-diag.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload && sudo udevadm trigger
 # После этого переткнуть адаптер.
 #
 # TAG+="uaccess" выдаёт права текущему локальному пользователю через systemd-logind,
 # поэтому перелогиниваться и добавляться в группы не нужно.
+#
+# Префикс 70 обязателен: ACL навешивает системное 73-seat-late.rules, поэтому наш
+# файл должен отработать РАНЬШЕ него. С префиксом 99 тег ставится слишком поздно
+# и права не появляются.
 
 # Lexia 3 / PSA XS Evolution (сырой USB, нужен pyusb)
 SUBSYSTEM=="usb", ATTR{idVendor}=="103a", ATTR{idProduct}=="f008", MODE="0660", TAG+="uaccess"
