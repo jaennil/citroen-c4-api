@@ -101,6 +101,25 @@ def read_frame(payload: bytes) -> bytes:
     return body + bytes([checksum(body)])
 
 
+def plan_batches(dids, lengths, max_n=MAX_DIDS_PER_REQUEST, max_bytes=30):
+    """Разбить DID на пачки, влезающие в один ответ.
+
+    Ограничений два, и второе неочевидное: кроме предела в 10 DID есть предел на
+    длину ответа. Замерено на 316 живых параметрах: бюджет 30 байт -> 306 прочитано
+    за 3.9 с, бюджет 40 -> только 226, потому что длинные пачки отклоняются целиком.
+    """
+    cur, used = [], 1  # 1 байт на сам код ответа 0x62
+    for d in dids:
+        need = 2 + lengths.get(d, 1)
+        if cur and (len(cur) >= max_n or used + need > max_bytes):
+            yield cur
+            cur, used = [], 1
+        cur.append(d)
+        used += need
+    if cur:
+        yield cur
+
+
 def read_multi_frame(dids) -> bytes:
     """Один запрос на несколько 16-битных DID: 22 <DID><DID>..."""
     pl = bytes([0x22]) + b"".join(bytes([(d >> 8) & 0xFF, d & 0xFF]) for d in dids)

@@ -29,7 +29,7 @@ import time
 import urllib.request
 
 from did_catalog import BY_DID, CATALOG
-from lexia_proto import (MAX_DIDS_PER_REQUEST, Lexia, parse_multi,
+from lexia_proto import (Lexia, parse_multi, plan_batches, read_did,
                          read_multi_frame)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -155,11 +155,15 @@ def main():
             while True:
                 t0 = time.time()
                 values = {}
-                # запросы пачками по 10 - предел, измеренный на машине
-                for i in range(0, len(dids), MAX_DIDS_PER_REQUEST):
-                    chunk = dids[i:i + MAX_DIDS_PER_REQUEST]
+                # пачки ограничены и числом DID, и длиной ответа
+                for chunk in plan_batches(dids, lengths):
                     payload, _ = lex.transact(read_multi_frame(chunk))
                     values.update(parse_multi(payload, lengths))
+                # добираем поштучно те, что не пришли в пачке
+                for d in dids:
+                    if d not in values:
+                        p2, _ = lex.transact(read_multi_frame([d]))
+                        values.update(parse_multi(p2, lengths))
 
                 row, shown = [], []
                 for d in dids:
