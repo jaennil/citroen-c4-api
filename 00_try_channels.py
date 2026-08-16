@@ -8,12 +8,13 @@ import subprocess
 import sys
 import time
 import logging
+import os
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 MAC = "00:10:CC:4F:36:03"
-SUDO_PASS = "naen"
+SUDO_PASS = os.environ.get("SUDO_PASS", "")  # пароль в коде не хранится
 BAUDS = [38400, 9600, 115200]
 
 
