@@ -10,8 +10,9 @@
 Порядок намеренный: сначала контрольное чтение заведомо рабочего DID, чтобы отличить
 "DID не существует" от "не работает вся цепочка".
 
-Запуск:  sudo ./.venv/bin/python probe_bsi.py
-         sudo ./.venv/bin/python probe_bsi.py --actuate   (ещё и подать 2F, свет ~3с)
+Запуск:  ./.venv/bin/python probe_bsi.py
+         ./.venv/bin/python probe_bsi.py --actuate   (ещё и подать 2F, свет ~3с)
+(root не нужен, права выдаёт 70-psa-diag.rules)
 
 Зажигание ON. Мотор можно и завести - "мотор должен быть заглушен" оказалось
 соглашением проекта, ничем не подтверждённым.
@@ -22,7 +23,7 @@ import logging
 import sys
 import time
 
-from lexia_proto import Lexia, actuate, describe, read_did
+from lexia_proto import Lexia, actuate, describe, link_status, read_did
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -50,9 +51,18 @@ def main():
         return 1
 
     try:
-        log.info("Инициализация сессии BSI...")
-        payload, raw = lex.init_session()
-        log.info(f"  сессия: {describe(payload) if payload else raw.hex() or 'нет ответа'}")
+        # Сначала проверяем, что Lexia вообще видит машину.
+        _, raw = lex.init_session()
+        st, meaning = link_status(raw)
+        log.info(f"Связь с машиной: статус 0x{st:02X} - {meaning}" if st is not None else "Нет ответа на init")
+        if st is not None and st != 0x01:
+            log.error("Lexia отвечает по USB, но машины не видит. Дальше идти бессмысленно:")
+            log.error("  - воткнут ли разъём Lexia в OBD (не только USB в ноутбук)?")
+            log.error("  - включено ли зажигание?")
+            return 3
+
+        log.info("Стартовая процедура DiagBox (10 01 / 10 03 + конфигурация)...")
+        lex.boot()
 
         print()
         print(f"{'DID':<8} {'что':<30} {'источник':<10} результат")

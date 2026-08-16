@@ -81,6 +81,19 @@ def actuate(did: int, on: bool = True) -> bytes:
     return frame(ACT_PREFIX, bytes([0x2F, 0xD8, did, 0x03, 0x0A, 0x01 if on else 0x00]))
 
 
+def link_status(resp: bytes):
+    """Статус связи Lexia с машиной - байт 18 ответа.
+
+    Во всём рабочем дампе (366 ответов) здесь всегда 0x01. Значение 0x0C в дампе
+    не встречается ни разу и наблюдалось только когда машина недоступна: либо
+    Lexia не воткнута в OBD, либо выключено зажигание и BSI спит.
+    """
+    if not resp or len(resp) < 19:
+        return None, "ответ слишком короткий"
+    st = resp[18]
+    return st, {0x01: "OK", 0x03: "?", 0x0C: "нет связи с машиной (OBD/зажигание)"}.get(st, f"неизвестно 0x{st:02X}")
+
+
 def extract_payload(resp: bytes):
     """Вытащить полезную нагрузку UDS из ответа Lexia.
 
@@ -176,6 +189,26 @@ class Lexia:
 
     def init_session(self):
         return self.transact(bytes.fromhex(INIT_FRAME))
+
+    def boot(self, verbose=True):
+        """Полная стартовая процедура DiagBox.
+
+        Одного INIT_FRAME мало: BSI не отвечает на чтения, пока не пройдут
+        DiagnosticSessionControl 10 01 / 10 03 и три конфигурационных блока.
+        Кадры воспроизводятся дословно из дампа.
+        """
+        from lexia_boot import BOOT
+
+        self.init_session()
+        for i, hx in enumerate(BOOT, 1):
+            payload, raw = self.transact(bytes.fromhex(hx))
+            if verbose:
+                b = bytes.fromhex(hx)
+                pl = b[24:-1]
+                tag = f"SessionControl {pl.hex()}" if pl[:1] == b"\x10" else f"{len(b)} байт"
+                log.info(f"  boot {i}/{len(BOOT)} {tag}: {describe(payload) if payload else (raw.hex()[:40] or 'нет ответа')}")
+            self.init_session()
+        return True
 
     def disconnect(self):
         if self.dev:
