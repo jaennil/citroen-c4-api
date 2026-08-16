@@ -94,3 +94,30 @@ Docstrings, log messages and menu text are in Russian - keep new code consistent
 ## Import offer
 
 An OpenAI Codex config exists at `~/.codex/config.toml`. Reply `/import` to scan and list what is importable (MCP servers, slash commands, subagents, skills, instructions), then `/import --yes=<digest>` with the digest from the scan output to apply the user-level items. If `/import` is unavailable on this surface, run `claude import` from a terminal.
+
+## Телеметрия в Grafana
+
+`telemetry.py` опрашивает BSI и пишет в локальный SQLite (`storage.py`), `sync.py`
+идемпотентно досылает накопленное в Postgres домашнего кластера. Ноутбук - сборщик,
+кластер - архив: поездки вдали от дома не теряются, а графики доступны и когда
+ноутбук выключен.
+
+Инфраструктура живёт в другом репозитории, `homelab-infra`, и уже развёрнута:
+namespace `citroen`, кластер CloudNativePG (база `car`, владелец `car`), читающая
+роль `grafana_reader` с тем же паролем, что у life-dashboard, поэтому переменная
+`$GRAFANA_READER_PASSWORD` в деплое Grafana работает для обоих источников.
+Источник данных в Grafana называется "Citroen C4". Оба секрета запечатаны
+через SealedSecret, открытых паролей в репозиториях нет.
+
+    export CAR_PG="postgresql://car:ПАРОЛЬ@<хост>:5432/car"
+    ./.venv/bin/python telemetry.py --preset engine --hz 2 --sqlite car.db
+    ./.venv/bin/python sync.py
+
+Пароль владельца базы:
+
+    kubectl get secret citroen-postgres-credentials -n citroen \
+      -o jsonpath='{.data.password}' | base64 -d
+
+Каталог параметров (`did_catalog.py`, 773 штуки) сгенерирован из дампа базы
+DiagBox; `sweep.py` обходит их все и записывает в `live_dids.py` те 316, что
+реально существуют на этой машине.
