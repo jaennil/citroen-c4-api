@@ -1,0 +1,23 @@
+[Unit]
+Description=Сбор телеметрии Citroen C4 через Lexia 3
+Documentation=file:///home/jaennil/life/citroen/c4-can/CLAUDE.md
+# Запускается правилом udev при подключении Lexia (70-psa-diag.rules).
+# Завершается сам, когда устройства нет 90 секунд - см. --exit-after-idle.
+
+[Service]
+Type=simple
+User=jaennil
+Group=jaennil
+WorkingDirectory=/home/jaennil/life/citroen/c4-can
+ExecStart=/home/jaennil/life/citroen/c4-can/.venv/bin/python \
+    /home/jaennil/life/citroen/c4-can/drive.py --exit-after-idle 90
+# Вынул Lexia и воткнул обратно - служба поднимется снова по udev;
+# упала по любой другой причине - перезапустится сама.
+Restart=on-failure
+RestartSec=5
+# После остановки пробуем сразу же отправить накопленное
+ExecStopPost=/home/jaennil/life/citroen/c4-can/sync-now.sh
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

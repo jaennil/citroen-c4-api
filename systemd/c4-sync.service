@@ -1,0 +1,11 @@
+[Unit]
+Description=Досылка телеметрии Citroen C4 в кластер
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jaennil
+Group=jaennil
+WorkingDirectory=/home/jaennil/life/citroen/c4-can
+ExecStart=/home/jaennil/life/citroen/c4-can/sync-now.sh

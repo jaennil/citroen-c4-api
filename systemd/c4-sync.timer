@@ -1,0 +1,12 @@
+[Unit]
+Description=Периодическая досылка телеметрии Citroen C4
+
+[Timer]
+# Через 2 минуты после загрузки, дальше каждые 15 минут.
+# Если сети нет или отправлять нечего - скрипт молча выходит.
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

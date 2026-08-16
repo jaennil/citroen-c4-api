@@ -12,8 +12,10 @@
 # файл должен отработать РАНЬШЕ него. С префиксом 99 тег ставится слишком поздно
 # и права не появляются.
 
-# Lexia 3 / PSA XS Evolution (сырой USB, нужен pyusb)
-SUBSYSTEM=="usb", ATTR{idVendor}=="103a", ATTR{idProduct}=="f008", MODE="0660", TAG+="uaccess"
+# Lexia 3 / PSA XS Evolution (сырой USB, нужен pyusb).
+# TAG+="systemd" плюс SYSTEMD_WANTS запускают сбор телеметрии сразу при подключении:
+# воткнул Lexia - служба поднялась сама, вынул - она завершится по --exit-after-idle.
+SUBSYSTEM=="usb", ATTR{idVendor}=="103a", ATTR{idProduct}=="f008", MODE="0660", TAG+="uaccess", TAG+="systemd", ENV{SYSTEMD_WANTS}="c4-telemetry.service"
 
 # ELM327 USB, QBD Virtual COM Port (этот адаптер)
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0918", ATTRS{idProduct}=="7104", MODE="0660", TAG+="uaccess"
