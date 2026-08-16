@@ -1,0 +1,20 @@
+# Доступ к диагностическим интерфейсам PSA без root.
+#
+# Установка:
+#   sudo cp 99-psa-diag.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger
+# После этого переткнуть адаптер.
+#
+# TAG+="uaccess" выдаёт права текущему локальному пользователю через systemd-logind,
+# поэтому перелогиниваться и добавляться в группы не нужно.
+
+# Lexia 3 / PSA XS Evolution (сырой USB, нужен pyusb)
+SUBSYSTEM=="usb", ATTR{idVendor}=="103a", ATTR{idProduct}=="f008", MODE="0660", TAG+="uaccess"
+
+# ELM327 USB, QBD Virtual COM Port (этот адаптер)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0918", ATTRS{idProduct}=="7104", MODE="0660", TAG+="uaccess"
+
+# Прочие частые ELM327-клоны на всякий случай
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE="0660", TAG+="uaccess"
