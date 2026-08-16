@@ -107,6 +107,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("params", nargs="*", help="имена/DID параметров")
     ap.add_argument("--preset", choices=sorted(PRESETS), help="готовый набор")
+    ap.add_argument("--all", action="store_true",
+                    help="все параметры, реально существующие на этой машине (live_dids.py)")
     ap.add_argument("--hz", type=float, default=1.0, help="частота опроса")
     ap.add_argument("--csv", help="писать в CSV")
     ap.add_argument("--sqlite", help="писать в локальный SQLite (буфер под sync.py)")
@@ -124,7 +126,11 @@ def main():
             print(f"  0x{e['did']:04X}  {e['name']:<58} {e['unit']}")
         return 0
 
-    tokens = args.params or (PRESETS[args.preset] if args.preset else [])
+    if args.all:
+        from live_dids import LIVE
+        tokens = [f"0x{d:04X}" for d, _ in LIVE]
+    else:
+        tokens = args.params or (PRESETS[args.preset] if args.preset else [])
     if not tokens:
         print("Укажи параметры или --preset. Поиск: --list VITESSE")
         print("Короткие имена:", ", ".join(sorted(ALIASES)))
