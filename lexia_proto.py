@@ -40,6 +40,13 @@ POLL = "410901c0f4"
 FETCH = "430901c0f2"
 ACK = "064409"
 POLL_BUSY = "42410901"
+
+# Паузы после записи в устройство. Подобраны замером на машине: при 5/2 мс
+100% успешных транзакций и ~111 мс на запрос; при 3/1 мс ломается полностью
+(0 из 20). То есть у устройства есть порог около 5 мс, ниже которого оно не
+успевает. Основное время транзакции - ответ самой Lexia, не наш код.
+SETTLE = 0.005
+POLL_SETTLE = 0.002
 POLL_DONE = "42410900"
 
 # ISO 14229 negative response codes
@@ -208,22 +215,22 @@ class Lexia:
         Возвращает (payload, raw). payload - разобранный ответ UDS.
         """
         self._w(cmd)
-        time.sleep(0.02)
+        time.sleep(SETTLE)
         self._r(timeout=500)  # 064009
 
         poll = bytes.fromhex(POLL)
         done = bytes.fromhex(POLL_DONE)
         for _ in range(poll_limit):
             self._w(poll)
-            time.sleep(0.005)
+            time.sleep(POLL_SETTLE)
             if self._r(timeout=500) == done:
                 break
 
         self._w(bytes.fromhex(FETCH))
-        time.sleep(0.02)
+        time.sleep(SETTLE)
         raw = self._r()
         self._w(bytes.fromhex(ACK))
-        time.sleep(0.01)
+        time.sleep(POLL_SETTLE)
         return extract_payload(raw), raw
 
     def init_session(self):
