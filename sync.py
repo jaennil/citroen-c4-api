@@ -29,8 +29,10 @@ CREATE TABLE IF NOT EXISTS param (
     id    smallserial PRIMARY KEY,
     did   integer NOT NULL UNIQUE,
     name  text NOT NULL,
-    unit  text
+    unit  text,
+    label text            -- человекочитаемое название, см. ru_labels.py
 );
+ALTER TABLE param ADD COLUMN IF NOT EXISTS label text;
 CREATE TABLE IF NOT EXISTS reading (
     ts       timestamptz NOT NULL,
     param_id smallint NOT NULL REFERENCES param(id),
@@ -76,17 +78,19 @@ def main():
                 break
             with conn.cursor() as cur:
                 # справочник параметров
-                params = {(did, name, unit) for _, _, did, name, unit, _ in rows}
+                params = {(did, name, unit, lab)
+                          for _, _, did, name, unit, _, lab in rows}
                 cur.executemany(
-                    "INSERT INTO param(did,name,unit) VALUES (%s,%s,%s) "
-                    "ON CONFLICT (did) DO NOTHING", sorted(params))
+                    "INSERT INTO param(did,name,unit,label) VALUES (%s,%s,%s,%s) "
+                    "ON CONFLICT (did) DO UPDATE SET label = EXCLUDED.label",
+                    sorted(params))
                 cur.execute("SELECT did, id FROM param")
                 pid = dict(cur.fetchall())
                 # сами значения; повтор по (param_id, ts) молча игнорируется
                 cur.executemany(
                     "INSERT INTO reading(ts, param_id, value) "
                     "VALUES (to_timestamp(%s), %s, %s) ON CONFLICT DO NOTHING",
-                    [(ts, pid[did], val) for _, ts, did, _, _, val in rows])
+                    [(ts, pid[did], val) for _, ts, did, _, _, val, _ in rows])
             conn.commit()
             store.mark_synced([r[0] for r in rows])
             sent += len(rows)

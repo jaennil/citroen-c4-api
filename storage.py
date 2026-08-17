@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS param (
     id    INTEGER PRIMARY KEY,
     did   INTEGER NOT NULL UNIQUE,
     name  TEXT NOT NULL,
-    unit  TEXT
+    unit  TEXT,
+    label TEXT              -- человекочитаемое название, см. ru_labels.py
 );
 CREATE TABLE IF NOT EXISTS reading (
     id       INTEGER PRIMARY KEY,
@@ -44,14 +45,20 @@ class Store:
     def param_id(self, did: int, name: str, unit: str = "") -> int:
         if did in self._ids:
             return self._ids[did]
+        from ru_labels import label as ru_label
+        lab = ru_label(did, name)
         cur = self.db.execute("SELECT id FROM param WHERE did=?", (did,))
         row = cur.fetchone()
         if row is None:
             cur = self.db.execute(
-                "INSERT INTO param(did, name, unit) VALUES (?,?,?)", (did, name, unit))
+                "INSERT INTO param(did, name, unit, label) VALUES (?,?,?,?)",
+                (did, name, unit, lab))
             pid = cur.lastrowid
         else:
             pid = row[0]
+            # дозаполняем ярлык у баз, созданных до его появления
+            self.db.execute("UPDATE param SET label=? WHERE id=? AND (label IS NULL OR label='')",
+                            (lab, pid))
         self._ids[did] = pid
         return pid
 
@@ -67,7 +74,7 @@ class Store:
 
     def unsynced(self, limit=5000):
         return self.db.execute(
-            "SELECT r.id, r.ts, p.did, p.name, p.unit, r.value "
+            "SELECT r.id, r.ts, p.did, p.name, p.unit, r.value, p.label "
             "FROM reading r JOIN param p ON p.id = r.param_id "
             "WHERE r.synced = 0 ORDER BY r.id LIMIT ?", (limit,)).fetchall()
 

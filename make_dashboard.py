@@ -20,7 +20,7 @@ import argparse
 import json
 import sys
 
-from did_catalog import BY_DID
+from did_catalog import BY_DID, CATALOG
 
 try:
     from live_dids import LIVE
@@ -29,8 +29,9 @@ except ImportError:
 
 DS = {"type": "postgres", "uid": "citroen-postgres"}
 
+# coalesce: если ярлык почему-то не заполнен, показываем мнемонику
 SERIES_SQL = (
-    'SELECT r.ts AS "time", p.name AS metric, r.value\n'
+    'SELECT r.ts AS "time", coalesce(p.label, p.name) AS metric, r.value\n'
     "FROM reading r JOIN param p ON p.id = r.param_id\n"
     "WHERE p.name IN ({names}) AND $__timeFilter(r.ts)\n"
     "ORDER BY 1"
@@ -160,15 +161,29 @@ def build():
 
     # --- обзор ---
     panels.append(row(pid, "Обзор", y, collapsed=False)); pid += 1; y += 1
-    for title, name, unit in [
-            ("Обороты", "MP_REGIME_MOTEUR_AFFICHE", "rotrpm"),
-            ("Скорость", "MP_VITESSE_VEHICULE_a", "velocitykmh"),
-            ("Питание BSI", "MP_TENSION_ALIMENTION_BSI", "volt"),
-            ("Масло", "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE", "celsius"),
-            ("Ключ", "MP_POSITION_CLE_CONTACT", ""),
-            ("Силовой агрегат", "MP_ETAT_GMP", "")]:
-        panels.append(stat(pid, title, name, ((pid - 2) % 6) * 4, y, unit)); pid += 1
-    y += 4
+    # Коды enum (положение ключа, состояние ГМП) из обзора убраны: без таблицы
+    # расшифровок это просто "2.0" и смысла не несёт. Они есть в таблице состояний.
+    OVERVIEW = [
+        ("Обороты", "MP_REGIME_MOTEUR_AFFICHE", "rotrpm"),
+        ("Скорость", "MP_VITESSE_VEHICULE_a", "velocitykmh"),
+        ("Пробег", "MP_KILOMETRAGE_TOTAL", "lengthkm"),
+        ("Топливо", "MP_NIVEAU_CARBURANT_AFFICHE", "litre"),
+        ("Запас хода", "MP_AUTONOMIE_CARBURANT_CALCULE", "lengthkm"),
+        ("За бортом", "MP_TEMPERATURE_EXTERIEURE", "celsius"),
+        ("Масло", "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE", "celsius"),
+        ("Напряжение АКБ", "MP_TENSION_BATTERIE", "volt"),
+        ("Питание BSI", "MP_TENSION_ALIMENTION_BSI", "volt"),
+        ("Заряд АКБ", "MP_ETAT_DE_CHARGE_BATTERIE_12V", "percent"),
+    ]
+    known = {e["name"] for e in CATALOG}
+    col = 0
+    for title, name, unit in OVERVIEW:
+        if name not in known:
+            continue          # параметра нет на этой машине - панель не рисуем
+        panels.append(stat(pid, title, name, (col % 6) * 4, y + (col // 6) * 4, unit))
+        pid += 1
+        col += 1
+    y += 4 * ((col + 5) // 6)
     panels.append(panel(pid, "Обороты и скорость", 0, y, 24, 8,
                         [target(["MP_REGIME_MOTEUR_AFFICHE", "MP_VITESSE_VEHICULE_a"])]))
     pid += 1; y += 8
@@ -178,7 +193,7 @@ def build():
     pid += 1; y += 1
     explorer = panel(pid, "Выбранные параметры", 0, y, 24, 10, [{
         "refId": "A", "datasource": DS, "format": "time_series", "rawQuery": True,
-        "rawSql": 'SELECT r.ts AS "time", p.name AS metric, r.value\n'
+        "rawSql": 'SELECT r.ts AS "time", coalesce(p.label, p.name) AS metric, r.value\n'
                   "FROM reading r JOIN param p ON p.id = r.param_id\n"
                   "WHERE p.name IN (${param:sqlstring}) AND $__timeFilter(r.ts)\n"
                   "ORDER BY 1",
@@ -221,17 +236,21 @@ def build():
         "timezone": "browser",
         "schemaVersion": 39,
         "refresh": "30s",
+        # 1 - общий курсор на всех панелях, чтобы читать значения в один момент времени
+        "graphTooltip": 1,
         "time": {"from": "now-24h", "to": "now"},
         "templating": {"list": [{
             "name": "param",
             "label": "Параметр",
             "type": "query",
             "datasource": DS,
-            "query": "SELECT name FROM param ORDER BY name",
+            # __text - что видно в списке, __value - что уходит в запрос
+            "query": "SELECT coalesce(label, name) AS \"__text\", name AS \"__value\" "
+                     "FROM param ORDER BY 1",
             "multi": True,
             "includeAll": False,
             "refresh": 1,
-            "current": {"text": ["MP_REGIME_MOTEUR_AFFICHE"],
+            "current": {"text": ["Обороты двигателя"],
                         "value": ["MP_REGIME_MOTEUR_AFFICHE"]},
         }]},
         "panels": panels,
