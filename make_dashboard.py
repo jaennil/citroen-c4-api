@@ -201,8 +201,23 @@ def build():
         pid += 1
         col += 1
     y += 6 * ((col + 3) // 4)
-    panels.append(panel(pid, "Обороты и скорость", 0, y, 24, 8,
-                        [target(["MP_REGIME_MOTEUR_AFFICHE", "MP_VITESSE_VEHICULE_a"])]))
+    # Две оси обязательны: обороты доходят до 4700, скорость до 45, и на общей
+    # шкале скорость превращается в плоскую линию у нуля.
+    combo = panel(pid, "Обороты и скорость", 0, y, 24, 8,
+                  [target(["MP_REGIME_MOTEUR_AFFICHE", "MP_VITESSE_VEHICULE_a"])],
+                  "rotrpm")
+    combo["fieldConfig"]["defaults"]["custom"]["axisLabel"] = "об/мин"
+    combo["fieldConfig"]["overrides"] = [{
+        "matcher": {"id": "byName", "options": "Скорость автомобиля"},
+        "properties": [
+            {"id": "unit", "value": "velocitykmh"},
+            {"id": "custom.axisPlacement", "value": "right"},
+            {"id": "custom.axisLabel", "value": "км/ч"},
+            {"id": "custom.lineWidth", "value": 2},
+            {"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}},
+        ],
+    }]
+    panels.append(combo)
     pid += 1; y += 8
 
     # --- обозреватель: через него доступны ВСЕ параметры ---
@@ -232,9 +247,18 @@ def build():
         else:
             inner = []
             iy = 0
+            # Сначала разбиваем по единицам измерения: иначе в одну панель попадают
+            # пробег в 195000 км и "дней до ТО", и второе не видно вообще.
+            by_unit = {}
+            for it in items:
+                by_unit.setdefault(it[1], []).append(it)
             # по 4 параметра на панель, чтобы легенда оставалась читаемой
-            for i in range(0, len(items), 4):
-                chunk = items[i:i + 4]
+            chunks = []
+            for u in sorted(by_unit):
+                grp = by_unit[u]
+                chunks += [grp[j:j + 4] for j in range(0, len(grp), 4)]
+            for i, chunk in enumerate(chunks):
+                i = i * 4
                 unit = UNIT_MAP.get(chunk[0][1], "")
                 # заголовок панели - из ручных имён; DID обязателен, иначе
                 # ru_label не найдёт запись и свалится в грубый автоперевод
