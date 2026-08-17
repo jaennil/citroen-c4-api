@@ -18,6 +18,9 @@
 
 import argparse
 import json
+import math
+import os
+import sqlite3
 import sys
 
 from did_catalog import BY_DID, CATALOG
@@ -137,6 +140,64 @@ UNIT_MAP = {"°C": "celsius", "V": "volt", "%": "percent", "km": "lengthkm",
             "month(s)": "", "A": "amp", "Nm": "", "s": "s"}
 
 
+def observed_counts(db_path="car.db"):
+    """Сколько значений записано по каждому параметру.
+
+    Нужно, чтобы не рисовать панели, которые гарантированно покажут "No data":
+    часть параметров BSI на этой машине всегда отдаёт маркер "нет значения"
+    (напряжение АКБ, заряд АКБ, дней до ТО), и после фильтрации от них не
+    остаётся ни одной точки.
+    """
+    if not os.path.exists(db_path):
+        return {}
+    try:
+        db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        rows = db.execute(
+            "SELECT p.name, count(v.value) FROM param p "
+            "LEFT JOIN reading v ON v.param_id = p.id GROUP BY p.id").fetchall()
+        db.close()
+        return dict(rows)
+    except sqlite3.Error:
+        return {}
+
+
+def observed_max(db_path="car.db"):
+    """Наблюдаемый максимум по каждому параметру - из локального буфера.
+
+    Нужен, чтобы не сваливать в одну панель величины разных порядков: пробег
+    9999 км рядом с 200 км делает второй ряд визуально плоским. Если базы нет,
+    группировка просто останется только по единицам измерения.
+    """
+    if not os.path.exists(db_path):
+        return {}
+    try:
+        db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        rows = db.execute(
+            "SELECT p.name, max(abs(v.value)) FROM param p "
+            "JOIN reading v ON v.param_id = p.id GROUP BY p.id").fetchall()
+        db.close()
+        return {n: m for n, m in rows if m}
+    except sqlite3.Error:
+        return {}
+
+
+MAXES = observed_max()
+COUNTS = observed_counts()
+# Фильтр включаем только когда данных набралось достаточно, иначе на пустой базе
+# он выкинул бы вообще всё.
+FILTER_EMPTY = sum(1 for v in COUNTS.values() if v) > 50
+
+
+def has_data(name):
+    return (not FILTER_EMPTY) or COUNTS.get(name, 0) > 0
+
+
+def magnitude(name):
+    """Порядок величины параметра. Незнакомые считаем средними."""
+    m = MAXES.get(name)
+    return int(math.floor(math.log10(m))) if m and m > 0 else 0
+
+
 def categorise():
     """Разложить живые параметры по смысловым группам."""
     names = {}
@@ -147,6 +208,8 @@ def categorise():
               "Пробег и обслуживание": [], "Состояния и флаги": [],
               "Конфигурация": []}
     for name, (unit, did) in sorted(names.items(), key=lambda kv: ru_label(kv[1][1], kv[0])):
+        if not has_data(name):
+            continue          # панель показала бы только "No data"
         item = (name, unit, did)
         if name.startswith("CFG_"):
             groups["Конфигурация"].append(item)
@@ -251,11 +314,11 @@ def build():
             # пробег в 195000 км и "дней до ТО", и второе не видно вообще.
             by_unit = {}
             for it in items:
-                by_unit.setdefault(it[1], []).append(it)
+                by_unit.setdefault((it[1], magnitude(it[0])), []).append(it)
             # по 4 параметра на панель, чтобы легенда оставалась читаемой
             chunks = []
-            for u in sorted(by_unit):
-                grp = by_unit[u]
+            for key in sorted(by_unit, key=lambda k: (k[0], k[1])):
+                grp = by_unit[key]
                 chunks += [grp[j:j + 4] for j in range(0, len(grp), 4)]
             for i, chunk in enumerate(chunks):
                 i = i * 4
