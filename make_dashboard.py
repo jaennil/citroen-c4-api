@@ -93,6 +93,15 @@ THRESHOLDS = {
         (None, "red"), (11.5, "orange"), (12.4, "green"), (15.0, "orange")],
 }
 
+# Пределы оси для панелей с порогами. Без них Grafana масштабирует ось по данным
+# (99..101 °C), и линии на 110/125/140 просто не попадают в кадр. Платим тем, что
+# рабочие колебания видны мельче - зато границы на месте.
+AXIS_RANGE = {
+    "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE": (80, 150),
+    "TEMPERATURE_HUILE_MESUREE": (80, 150),
+    "MP_TENSION_ALIMENTION_BSI": (10, 16),
+}
+
 # Что означают цветные линии - выводится в подсказке панели (значок i в углу).
 THRESHOLD_HELP = {
     "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE":
@@ -121,13 +130,17 @@ def with_thresholds(p, name):
     p["fieldConfig"]["defaults"].setdefault("custom", {})["thresholdsStyle"] = {
         "mode": "dashed+area"
     }
+    rng = AXIS_RANGE.get(name)
+    if rng:
+        p["fieldConfig"]["defaults"]["min"] = rng[0]
+        p["fieldConfig"]["defaults"]["max"] = rng[1]
     help_text = THRESHOLD_HELP.get(name)
     if help_text:
         p["description"] = help_text
     return p
 
 
-def mini(pid, title, name, gx, gy, unit="", gw=6, gh=6):
+def mini(pid, title, name, gx, gy, unit="", gw=12, gh=7):
     """Компактный график для обзора.
 
     Раньше здесь была панель stat с большой цифрой, но у неё в Grafana НЕТ
@@ -308,10 +321,10 @@ def build():
     for title, name, unit in OVERVIEW:
         if name not in known:
             continue          # параметра нет на этой машине - панель не рисуем
-        panels.append(mini(pid, title, name, (col % 4) * 6, y + (col // 4) * 6, unit))
+        panels.append(mini(pid, title, name, (col % 2) * 12, y + (col // 2) * 7, unit))
         pid += 1
         col += 1
-    y += 6 * ((col + 3) // 4)
+    y += 7 * ((col + 1) // 2)
     # Две оси обязательны: обороты доходят до 4700, скорость до 45, и на общей
     # шкале скорость превращается в плоскую линию у нуля.
     combo = panel(pid, "Обороты и скорость", 0, y, 24, 8,
@@ -374,7 +387,7 @@ def build():
                 # заголовок панели - из ручных имён; DID обязателен, иначе
                 # ru_label не найдёт запись и свалится в грубый автоперевод
                 pan = panel(pid, " · ".join(ru_label(d, n)[:26] for n, _, d in chunk),
-                            (i // 4 % 2) * 12, iy, 12, 7,
+                            (i // 4 % 2) * 12, iy, 12, 8,
                             [target([n for n, _, _ in chunk])], unit)
                 if len(chunk) == 1:
                     pan = with_thresholds(pan, chunk[0][0])
