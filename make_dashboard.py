@@ -92,8 +92,8 @@ def stat(pid, title, name, gx, gy, unit="", gw=4, gh=4):
 
 
 LATEST_SQL = (
-    'SELECT p.name AS "Параметр", p.unit AS "Ед.", l.value AS "Значение",\n'
-    '       l.ts AS "Обновлено"\n'
+    'SELECT coalesce(p.label, p.name) AS "Параметр", p.unit AS "Ед.",\n'
+    '       l.value AS "Значение", l.ts AS "Обновлено"\n'
     "FROM param p\n"
     "JOIN LATERAL (SELECT value, ts FROM reading WHERE param_id = p.id\n"
     "              ORDER BY ts DESC LIMIT 1) l ON true\n"
@@ -139,19 +139,20 @@ def categorise():
     groups = {"Температуры": [], "Напряжения и ток": [], "Проценты": [],
               "Пробег и обслуживание": [], "Состояния и флаги": [],
               "Конфигурация": []}
-    for name, (unit, did) in sorted(names.items()):
+    for name, (unit, did) in sorted(names.items(), key=lambda kv: ru_label(kv[1][1], kv[0])):
+        item = (name, unit, did)
         if name.startswith("CFG_"):
-            groups["Конфигурация"].append((name, unit))
+            groups["Конфигурация"].append(item)
         elif unit == "°C" or "TEMPERATURE" in name:
-            groups["Температуры"].append((name, unit))
+            groups["Температуры"].append(item)
         elif unit in ("V", "A") or "TENSION" in name or "COURANT" in name:
-            groups["Напряжения и ток"].append((name, unit))
+            groups["Напряжения и ток"].append(item)
         elif unit == "%":
-            groups["Проценты"].append((name, unit))
+            groups["Проценты"].append(item)
         elif unit in ("km", "month(s)") or "KILOMETR" in name or "MAINT" in name:
-            groups["Пробег и обслуживание"].append((name, unit))
+            groups["Пробег и обслуживание"].append(item)
         else:
-            groups["Состояния и флаги"].append((name, unit))
+            groups["Состояния и флаги"].append(item)
     return groups
 
 
@@ -211,7 +212,7 @@ def build():
             continue
         if title in TABLE_GROUPS:
             inner = [latest_table(pid, f"{title}: текущие значения",
-                                  [n for n, _ in items])]
+                                  [n for n, _, _ in items])]
             pid += 1
         else:
             inner = []
@@ -220,10 +221,11 @@ def build():
             for i in range(0, len(items), 4):
                 chunk = items[i:i + 4]
                 unit = UNIT_MAP.get(chunk[0][1], "")
-                # заголовок панели - из человекочитаемых ярлыков, а не мнемоник
-                inner.append(panel(pid, " · ".join(ru_label(0, n)[:24] for n, _ in chunk),
+                # заголовок панели - из ручных имён; DID обязателен, иначе
+                # ru_label не найдёт запись и свалится в грубый автоперевод
+                inner.append(panel(pid, " · ".join(ru_label(d, n)[:26] for n, _, d in chunk),
                                    (i // 4 % 2) * 12, iy, 12, 7,
-                                   [target([n for n, _ in chunk])], unit))
+                                   [target([n for n, _, _ in chunk])], unit))
                 pid += 1
                 if i // 4 % 2:
                     iy += 7
