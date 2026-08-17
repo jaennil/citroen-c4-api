@@ -80,6 +80,53 @@ def panel(pid, title, gx, gy, gw, gh, targets, unit="", kind="timeseries", extra
     return p
 
 
+# Границы для параметров, где есть смысл в пороговых линиях.
+# Температура масла: до 110 норма, 110-125 высокая нагрузка, 125-140 "опасненько",
+# выше 140 масло деградирует быстро. Скорость окисления примерно удваивается
+# на каждые 10 °C выше сотни, отсюда и шаг.
+THRESHOLDS = {
+    "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE": [
+        (None, "green"), (110, "#EAB839"), (125, "orange"), (140, "red")],
+    "TEMPERATURE_HUILE_MESUREE": [
+        (None, "green"), (110, "#EAB839"), (125, "orange"), (140, "red")],
+    "MP_TENSION_ALIMENTION_BSI": [
+        (None, "red"), (11.5, "orange"), (12.4, "green"), (15.0, "orange")],
+}
+
+# Что означают цветные линии - выводится в подсказке панели (значок i в углу).
+THRESHOLD_HELP = {
+    "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE":
+        "Пороговые линии: 110 °C - высокая нагрузка (трасса, жара, прицеп), "
+        "125 °C - долго держать не стоит, 140 °C - масло деградирует быстро, "
+        "искать причину. Норма 90-110 °C. На холостых без обдува температура "
+        "ползёт вверх - это ожидаемо.",
+    "TEMPERATURE_HUILE_MESUREE":
+        "То же, что и у расчётной температуры: 110 / 125 / 140 °C.",
+    "MP_TENSION_ALIMENTION_BSI":
+        "Ниже 11.5 В - глубокий разряд, 12.4 В - нижняя граница нормы покоя, "
+        "выше 15 В - перезаряд, подозрение на регулятор генератора.",
+}
+
+
+def with_thresholds(p, name):
+    """Дорисовать пороговые линии, если для параметра они заданы."""
+    steps = THRESHOLDS.get(name)
+    if not steps:
+        return p
+    p["fieldConfig"]["defaults"]["thresholds"] = {
+        "mode": "absolute",
+        "steps": [{"value": v, "color": c} for v, c in steps],
+    }
+    # dashed+area: пунктирная линия плюс подкраска зоны за порогом
+    p["fieldConfig"]["defaults"].setdefault("custom", {})["thresholdsStyle"] = {
+        "mode": "dashed+area"
+    }
+    help_text = THRESHOLD_HELP.get(name)
+    if help_text:
+        p["description"] = help_text
+    return p
+
+
 def mini(pid, title, name, gx, gy, unit="", gw=6, gh=6):
     """Компактный график для обзора.
 
@@ -98,7 +145,7 @@ def mini(pid, title, name, gx, gy, unit="", gw=6, gh=6):
         "lineWidth": 2, "fillOpacity": 15, "showPoints": "never",
         "spanNulls": True,
     }
-    return p
+    return with_thresholds(p, name)
 
 
 LATEST_SQL = (
@@ -326,9 +373,12 @@ def build():
                 unit = UNIT_MAP.get(chunk[0][1], "")
                 # заголовок панели - из ручных имён; DID обязателен, иначе
                 # ru_label не найдёт запись и свалится в грубый автоперевод
-                inner.append(panel(pid, " · ".join(ru_label(d, n)[:26] for n, _, d in chunk),
-                                   (i // 4 % 2) * 12, iy, 12, 7,
-                                   [target([n for n, _, _ in chunk])], unit))
+                pan = panel(pid, " · ".join(ru_label(d, n)[:26] for n, _, d in chunk),
+                            (i // 4 % 2) * 12, iy, 12, 7,
+                            [target([n for n, _, _ in chunk])], unit)
+                if len(chunk) == 1:
+                    pan = with_thresholds(pan, chunk[0][0])
+                inner.append(pan)
                 pid += 1
                 if i // 4 % 2:
                     iy += 7
