@@ -77,18 +77,25 @@ def panel(pid, title, gx, gy, gw, gh, targets, unit="", kind="timeseries", extra
     return p
 
 
-def stat(pid, title, name, gx, gy, unit="", gw=4, gh=4):
-    return {
-        "id": pid,
-        "type": "stat",
-        "title": title,
-        "datasource": DS,
-        "gridPos": {"h": gh, "w": gw, "x": gx, "y": gy},
-        "targets": [target([name], "A")],
-        "fieldConfig": {"defaults": {"unit": unit, "decimals": 1}, "overrides": []},
-        "options": {"reduceOptions": {"calcs": ["lastNotNull"]},
-                    "graphMode": "area", "colorMode": "value"},
+def mini(pid, title, name, gx, gy, unit="", gw=6, gh=6):
+    """Компактный график для обзора.
+
+    Раньше здесь была панель stat с большой цифрой, но у неё в Grafana НЕТ
+    тултипа - спарклайн декоративный и на наведение не реагирует. Поэтому обзор
+    собран из обычных timeseries: текущее значение видно в легенде (Last),
+    а по наведению доступно значение в любой момент времени.
+    """
+    p = panel(pid, title, gx, gy, gw, gh, [target([name], "A")], unit)
+    p["options"] = {
+        "legend": {"showLegend": True, "displayMode": "list",
+                   "placement": "bottom", "calcs": ["lastNotNull"]},
+        "tooltip": {"mode": "single", "sort": "none"},
     }
+    p["fieldConfig"]["defaults"]["custom"] = {
+        "lineWidth": 2, "fillOpacity": 15, "showPoints": "never",
+        "spanNulls": True,
+    }
+    return p
 
 
 LATEST_SQL = (
@@ -165,27 +172,33 @@ def build():
     panels.append(row(pid, "Обзор", y, collapsed=False)); pid += 1; y += 1
     # Коды enum (положение ключа, состояние ГМП) из обзора убраны: без таблицы
     # расшифровок это просто "2.0" и смысла не несёт. Они есть в таблице состояний.
+    # Убраны параметры, которые на этой машине не отдаются вообще: напряжение АКБ
+    # (D8/DA46), заряд АКБ (DA21) и мгновенный расход (D8C7) всегда возвращают
+    # маркер "нет данных", поэтому в обзоре давали "No data".
+    # Пробег - через suffix, иначе Grafana масштабирует 195446 км в "195.4 Mm".
     OVERVIEW = [
         ("Обороты", "MP_REGIME_MOTEUR_AFFICHE", "rotrpm"),
         ("Скорость", "MP_VITESSE_VEHICULE_a", "velocitykmh"),
-        ("Пробег", "MP_KILOMETRAGE_TOTAL", "lengthkm"),
-        ("Топливо", "MP_NIVEAU_CARBURANT_AFFICHE", "litre"),
-        ("Запас хода", "MP_AUTONOMIE_CARBURANT_CALCULE", "lengthkm"),
-        ("За бортом", "MP_TEMPERATURE_EXTERIEURE", "celsius"),
-        ("Масло", "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE", "celsius"),
-        ("Напряжение АКБ", "MP_TENSION_BATTERIE", "volt"),
+        ("Температура масла", "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE", "celsius"),
         ("Питание BSI", "MP_TENSION_ALIMENTION_BSI", "volt"),
-        ("Заряд АКБ", "MP_ETAT_DE_CHARGE_BATTERIE_12V", "percent"),
+        ("Пробег общий", "MP_KILOMETRAGE_TOTAL", "suffix: км"),
+        ("Топливо в баке", "MP_NIVEAU_CARBURANT_AFFICHE", "litre"),
+        ("Запас хода", "MP_AUTONOMIE_CARBURANT_CALCULE", "suffix: км"),
+        ("Температура за бортом", "MP_TEMPERATURE_EXTERIEURE", "celsius"),
+        ("Напряжение АКБ в покое", "MP_TENSION_BATTERIE_AU_REPOS", "volt"),
+        ("Уровень масла", "MP_NIVEAU_HUILE_MOTEUR_MOYENNE", "percent"),
+        ("Пробег поездки 1", "MP_KILOMETRAGE_TRAJET1", "suffix: км"),
+        ("Скорость рыскания", "MP_VITESSE_LACET", ""),
     ]
     known = {e["name"] for e in CATALOG}
     col = 0
     for title, name, unit in OVERVIEW:
         if name not in known:
             continue          # параметра нет на этой машине - панель не рисуем
-        panels.append(stat(pid, title, name, (col % 6) * 4, y + (col // 6) * 4, unit))
+        panels.append(mini(pid, title, name, (col % 4) * 6, y + (col // 4) * 6, unit))
         pid += 1
         col += 1
-    y += 4 * ((col + 5) // 6)
+    y += 6 * ((col + 3) // 4)
     panels.append(panel(pid, "Обороты и скорость", 0, y, 24, 8,
                         [target(["MP_REGIME_MOTEUR_AFFICHE", "MP_VITESSE_VEHICULE_a"])]))
     pid += 1; y += 8
