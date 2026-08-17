@@ -247,13 +247,14 @@ def build():
         ("Температура масла", "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE", "celsius"),
         ("Питание BSI", "MP_TENSION_ALIMENTION_BSI", "volt"),
         ("Пробег общий", "MP_KILOMETRAGE_TOTAL", "suffix: км"),
-        ("Топливо в баке", "MP_NIVEAU_CARBURANT_AFFICHE", "litre"),
+        ("Топливо в баке", "MP_NIVEAU_CARBURANT_MESURE", "litre"),
         ("Запас хода", "MP_AUTONOMIE_CARBURANT_CALCULE", "suffix: км"),
         ("Температура за бортом", "MP_TEMPERATURE_EXTERIEURE", "celsius"),
         ("Напряжение АКБ в покое", "MP_TENSION_BATTERIE_AU_REPOS", "volt"),
         ("Уровень масла", "MP_NIVEAU_HUILE_MOTEUR_MOYENNE", "percent"),
         ("Пробег поездки 1", "MP_KILOMETRAGE_TRAJET1", "suffix: км"),
-        ("Расход текущий", "MP_CONSOMMATION_CARBURANT_RAPIDE", "suffix: л/100км"),
+        ("Расход средний", "MP_CONSOMMATION_CARBURANT_MOYENNE_TRAJET1", "suffix: л/100км"),
+        ("Км до ТО", "MP_NOMBRE_KILOMETRE_AVANT_MAINTENANCE", "suffix: км"),
     ]
     known = {e["name"] for e in CATALOG}
     col = 0
