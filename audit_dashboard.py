@@ -73,6 +73,15 @@ def main():
         names = re.findall(r"'([A-Za-z_0-9]+)'", sql)
         known = [n for n in names if n in rng]
 
+        # Производная панель: рисует ОДНУ вычисленную серию (например отношение
+        # оборотов к скорости), а имена параметров в запросе - только слагаемые
+        # формулы. Сравнивать их диапазоны бессмысленно, это давало ложную
+        # жалобу на "разные единицы" и "разные масштабы".
+        derived = ("coalesce(p.label" not in sql
+                   and re.search(r"'[^']+' AS metric", sql) is not None)
+        if derived:
+            continue
+
         empty = [n for n in known if rng[n][2] is None]
         if empty and len(empty) == len(known) and known:
             problems.append(("нет данных ни по одной серии", title, ", ".join(empty[:3])))
