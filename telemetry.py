@@ -83,6 +83,24 @@ PLAUSIBLE = {
 }
 
 
+# Поправки к базе DiagBox там, где её множитель заведомо неверен.
+# DBEC: пробег при последнем сбросе ТО с множителем 1.0 даёт 1 856 628 км при
+# общем пробеге 195 447. С множителем 0.1 - как у общего пробега, тоже в
+# десятых километра - получается 185 663 км, и арифметика закрывается:
+# 195 447 - 185 663 = 9784 км с последнего ТО, плюс 630 км до следующего,
+# итого интервал ~10 400 км. Это и есть штатный интервал.
+FACTOR_FIX = {0xDBEC: 0.1}
+
+# Безразмерные параметры, где 254/255 - это "нет данных", а не код.
+# Все они вида "последняя причина..." и "условие удержания": BSI отдаёт 0xFE,
+# когда причины нет. Для флагов такую проверку делать нельзя - там 0xFF законен,
+# поэтому список явный, а не по эвристике.
+NO_DATA_UNITLESS = {
+    0xDA30, 0xDA43, 0xDA4F, 0xDA50, 0xDA51, 0xDA52, 0xDA53,
+    0xDA56, 0xDA57, 0xDA5D, 0xDA60,
+}
+
+
 def decode(did: int, raw: bytes):
     """Привести сырые байты к физической величине по первому полю каталога.
 
@@ -117,6 +135,8 @@ def decode(did: int, raw: bytes):
         # что физически невозможно, ~9 оборотов машины в секунду.
         if unit and val in (full, full - 1, smax, smax + 1):
             return None, unit
+        if did in NO_DATA_UNITLESS and val in (full, full - 1):
+            return None, unit
 
     if is_bitfield:
         try:
@@ -124,7 +144,8 @@ def decode(did: int, raw: bytes):
         except (TypeError, ValueError):
             pass
 
-    val = val * (e["factor"] or 1.0) + e.get("offset", 0.0)
+    factor = FACTOR_FIX.get(did, e["factor"] or 1.0)
+    val = val * factor + e.get("offset", 0.0)
     lo, hi = PLAUSIBLE.get(unit, (None, None))
     if lo is not None and not (lo <= val <= hi):
         return None, unit
