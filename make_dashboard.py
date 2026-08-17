@@ -117,6 +117,68 @@ THRESHOLD_HELP = {
 }
 
 
+# Подписи к границам. Тултип умеет показывать только СЕРИИ, а пороговая линия
+# Grafana серией не является - подписать её никак. Поэтому границы добавляются
+# в запрос как константные серии с говорящими именами: тогда они видны и в
+# легенде, и в тултипе при наведении.
+THRESHOLD_LINES = {
+    "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE": [
+        (110, "граница: высокая нагрузка", "#EAB839"),
+        (125, "граница: долго держать нельзя", "orange"),
+        (140, "граница: масло деградирует", "red"),
+    ],
+    "TEMPERATURE_HUILE_MESUREE": [
+        (110, "граница: высокая нагрузка", "#EAB839"),
+        (125, "граница: долго держать нельзя", "orange"),
+        (140, "граница: масло деградирует", "red"),
+    ],
+    "MP_TENSION_ALIMENTION_BSI": [
+        (11.5, "граница: глубокий разряд", "red"),
+        (12.4, "граница: низ нормы покоя", "#EAB839"),
+        (15.0, "граница: перезаряд", "orange"),
+    ],
+}
+
+
+def target_with_lines(name, lines):
+    """Запрос параметра плюс горизонтальные линии-границы как отдельные серии.
+
+    Каждая граница - две точки на краях выбранного интервала, поэтому рисуется
+    ровной линией через весь график и подписывается в тултипе.
+    """
+    # ORDER BY убираем: внутри UNION ALL он недопустим, сортировка идёт в конце
+    base = SERIES_SQL.format(names=sql_in([name])).replace("\nORDER BY 1", "")
+    parts = [base]
+    for value, title, _ in lines:
+        label = title.replace("'", "''")
+        parts.append(
+            f"SELECT $__timeFrom()::timestamptz AS \"time\", '{label}' AS metric, {value}\n"
+            f"UNION ALL SELECT $__timeTo()::timestamptz, '{label}', {value}"
+        )
+    sql = "\nUNION ALL\n".join(parts) + "\nORDER BY 1"
+    return {"refId": "A", "datasource": DS, "format": "time_series",
+            "rawQuery": True, "rawSql": sql}
+
+
+def line_overrides(lines):
+    """Границы рисуем пунктиром, без заливки, чтобы не мешали основному ряду."""
+    out = []
+    for _, title, color in lines:
+        out.append({
+            "matcher": {"id": "byName", "options": title},
+            "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": color}},
+                {"id": "custom.lineStyle",
+                 "value": {"fill": "dash", "dash": [10, 10]}},
+                {"id": "custom.lineWidth", "value": 1},
+                {"id": "custom.fillOpacity", "value": 0},
+                {"id": "custom.hideFrom",
+                 "value": {"legend": False, "tooltip": False, "viz": False}},
+            ],
+        })
+    return out
+
+
 def with_thresholds(p, name):
     """Дорисовать пороговые линии, если для параметра они заданы."""
     steps = THRESHOLDS.get(name)
@@ -127,8 +189,11 @@ def with_thresholds(p, name):
         "steps": [{"value": v, "color": c} for v, c in steps],
     }
     # dashed+area: пунктирная линия плюс подкраска зоны за порогом
+    # только заливка зон: пунктирные линии теперь рисуются подписанными сериями,
+    # иначе на тех же значениях получилось бы по две линии
+    style = "area" if THRESHOLD_LINES.get(name) else "dashed+area"
     p["fieldConfig"]["defaults"].setdefault("custom", {})["thresholdsStyle"] = {
-        "mode": "dashed+area"
+        "mode": style
     }
     rng = AXIS_RANGE.get(name)
     if rng:
@@ -148,12 +213,17 @@ def mini(pid, title, name, gx, gy, unit="", gw=12, gh=7):
     собран из обычных timeseries: текущее значение видно в легенде (Last),
     а по наведению доступно значение в любой момент времени.
     """
-    p = panel(pid, title, gx, gy, gw, gh, [target([name], "A")], unit)
+    lines = THRESHOLD_LINES.get(name)
+    tgt = target_with_lines(name, lines) if lines else target([name], "A")
+    p = panel(pid, title, gx, gy, gw, gh, [tgt], unit)
+    # multi: чтобы при наведении были видны и значение, и все границы сразу
     p["options"] = {
         "legend": {"showLegend": True, "displayMode": "list",
                    "placement": "bottom", "calcs": ["lastNotNull"]},
-        "tooltip": {"mode": "single", "sort": "none"},
+        "tooltip": {"mode": "multi" if lines else "single", "sort": "none"},
     }
+    if lines:
+        p["fieldConfig"]["overrides"] = line_overrides(lines)
     p["fieldConfig"]["defaults"]["custom"] = {
         "lineWidth": 2, "fillOpacity": 15, "showPoints": "never",
         "spanNulls": True,
