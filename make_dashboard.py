@@ -176,6 +176,8 @@ def build():
     # (D8/DA46), заряд АКБ (DA21) и мгновенный расход (D8C7) всегда возвращают
     # маркер "нет данных", поэтому в обзоре давали "No data".
     # Пробег - через suffix, иначе Grafana масштабирует 195446 км в "195.4 Mm".
+    # Скорость рыскания тоже убрана: BSI отдаёт по ней только знаковый маркер
+    # 0x7FFF (3276.7 °/s), реальных данных на этой машине нет.
     OVERVIEW = [
         ("Обороты", "MP_REGIME_MOTEUR_AFFICHE", "rotrpm"),
         ("Скорость", "MP_VITESSE_VEHICULE_a", "velocitykmh"),
@@ -188,7 +190,7 @@ def build():
         ("Напряжение АКБ в покое", "MP_TENSION_BATTERIE_AU_REPOS", "volt"),
         ("Уровень масла", "MP_NIVEAU_HUILE_MOTEUR_MOYENNE", "percent"),
         ("Пробег поездки 1", "MP_KILOMETRAGE_TRAJET1", "suffix: км"),
-        ("Скорость рыскания", "MP_VITESSE_LACET", ""),
+        ("Расход текущий", "MP_CONSOMMATION_CARBURANT_RAPIDE", "suffix: л/100км"),
     ]
     known = {e["name"] for e in CATALOG}
     col = 0
