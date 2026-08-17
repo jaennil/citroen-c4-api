@@ -96,13 +96,21 @@ def decode(did: int, raw: bytes):
         return (raw.hex() if raw else None), ""
     e = entries[0]
     ln = e["ln"] or len(raw)
-    val = int.from_bytes(raw[:ln] or raw, "big")
+    # start_byte из базы DiagBox - позиция данных в ответе 62 <DID> <данные>,
+    # где 4 означает первый байт данных. Раньше смещение игнорировалось, и у
+    # параметров с sb>4 читались чужие байты: язык меню, поставщик блока,
+    # версия ПО и два условия удержания шины показывали мусор.
+    off = max(0, (e["sb"] or 4) - 4)
+    chunk = raw[off:off + ln]
+    if not chunk:
+        return None, e["unit"]
+    val = int.from_bytes(chunk, "big")
     unit = e["unit"]
 
     is_bitfield = e["mask"] is not None
     if not is_bitfield:
-        full = (1 << (8 * ln)) - 1
-        smax = (1 << (8 * ln - 1)) - 1      # максимум знакового: 0x7F, 0x7FFF
+        full = (1 << (8 * len(chunk))) - 1
+        smax = (1 << (8 * len(chunk) - 1)) - 1   # максимум знакового: 0x7F, 0x7FFF
         # Маркеры "нет значения" проверяем только у измеряемых величин: у флагов
         # и счётчиков 0xFF бывает законным. Знаковые величины используют свой
         # маркер - 0x7FFF: скорость рыскания показывала 3276.7 °/s (0x7FFF x 0.1),
