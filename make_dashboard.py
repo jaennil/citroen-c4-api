@@ -21,6 +21,7 @@ import json
 import sys
 
 from did_catalog import BY_DID, CATALOG
+from ru_labels import label as ru_label
 
 try:
     from live_dids import LIVE
@@ -134,11 +135,11 @@ def categorise():
     names = {}
     for did, name in LIVE:
         e = BY_DID.get(did)
-        names[name] = (e[0]["unit"] if e else "")
+        names[name] = (e[0]["unit"] if e else "", did)
     groups = {"Температуры": [], "Напряжения и ток": [], "Проценты": [],
               "Пробег и обслуживание": [], "Состояния и флаги": [],
               "Конфигурация": []}
-    for name, unit in sorted(names.items()):
+    for name, (unit, did) in sorted(names.items()):
         if name.startswith("CFG_"):
             groups["Конфигурация"].append((name, unit))
         elif unit == "°C" or "TEMPERATURE" in name:
@@ -219,7 +220,8 @@ def build():
             for i in range(0, len(items), 4):
                 chunk = items[i:i + 4]
                 unit = UNIT_MAP.get(chunk[0][1], "")
-                inner.append(panel(pid, ", ".join(n.replace("MP_", "")[:26] for n, _ in chunk),
+                # заголовок панели - из человекочитаемых ярлыков, а не мнемоник
+                inner.append(panel(pid, " · ".join(ru_label(0, n)[:24] for n, _ in chunk),
                                    (i // 4 % 2) * 12, iy, 12, 7,
                                    [target([n for n, _ in chunk])], unit))
                 pid += 1

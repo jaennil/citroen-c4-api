@@ -68,20 +68,52 @@ def did_length(did: int) -> int:
     return max((e["sb"] - 4) + e["ln"] for e in entries) or 1
 
 
+# Границы правдоподобия по единицам измерения: отсекают мусор, который прошёл
+# мимо проверки на маркеры. Проценты больше 100 - это не измерение.
+PLAUSIBLE = {
+    "%": (0.0, 100.0),
+    "V": (0.0, 20.0), "Volt(s)": (0.0, 20.0),
+    "°C": (-50.0, 200.0),
+    "km/h": (0.0, 300.0),
+    "Rpm": (0.0, 8000.0),
+}
+
+
 def decode(did: int, raw: bytes):
-    """Привести сырые байты к физической величине по первому полю каталога."""
+    """Привести сырые байты к физической величине по первому полю каталога.
+
+    Возвращает (None, unit), если значение недоступно. PSA помечает отсутствие
+    данных максимальным сырым кодом или на единицу меньше: 0xFF/0xFE для одного
+    байта, 0xFFFF/0xFFFE для двух. Без этой проверки напряжение АКБ показывало
+    65.5 В (0xFFFE x 0.001), заряд 254% (0xFE), уровень масла 255% (0xFF).
+    """
     entries = BY_DID.get(did)
     if not entries or not raw:
-        return raw.hex() if raw else None, ""
+        return (raw.hex() if raw else None), ""
     e = entries[0]
-    val = int.from_bytes(raw[: e["ln"]] or raw, "big")
-    if e["mask"] is not None:
+    ln = e["ln"] or len(raw)
+    val = int.from_bytes(raw[:ln] or raw, "big")
+    unit = e["unit"]
+
+    is_bitfield = e["mask"] is not None
+    if not is_bitfield:
+        full = (1 << (8 * ln)) - 1
+        # маркеры "нет значения" проверяем только у измеряемых величин:
+        # у флагов и счётчиков 0xFF может быть законным значением
+        if unit and val in (full, full - 1):
+            return None, unit
+
+    if is_bitfield:
         try:
             val = (val & int(e["mask"])) >> int(e["shift"] or 0)
         except (TypeError, ValueError):
             pass
+
     val = val * (e["factor"] or 1.0) + e.get("offset", 0.0)
-    return round(val, 3), e["unit"]
+    lo, hi = PLAUSIBLE.get(unit, (None, None))
+    if lo is not None and not (lo <= val <= hi):
+        return None, unit
+    return round(val, 3), unit
 
 
 def resolve(tokens):
