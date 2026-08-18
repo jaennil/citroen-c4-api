@@ -15,8 +15,11 @@ ExecStart=/home/jaennil/life/citroen/c4-can/.venv/bin/python \
 # упала по любой другой причине - перезапустится сама.
 Restart=on-failure
 RestartSec=5
-# После остановки пробуем сразу же отправить накопленное
-ExecStopPost=/home/jaennil/life/citroen/c4-can/sync-now.sh
+# Досылку тут НЕ запускаем. Раньше стоял ExecStopPost=sync-now.sh, и остановка
+# службы висела больше минуты: вне домашней сети SSH уходит в таймаут, скрипт
+# делает три попытки, а systemd всё это время ждёт в stop-post. Досылка и так
+# идёт по таймеру c4-sync.timer каждые 15 минут, так что здесь она лишняя.
+TimeoutStopSec=20
 Nice=5
 
 [Install]

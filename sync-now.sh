@@ -35,7 +35,15 @@ PY
 [ "${PENDING:-0}" -gt 0 ] || { echo "отправлять нечего"; exit 0; }
 echo "к отправке: $PENDING значений"
 
-SSH_OPTS=(-n -i "$SSH_KEY" -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=10)
+SSH_OPTS=(-n -i "$SSH_KEY" -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5)
+
+# Сначала одна короткая проверка достижимости. Без неё вне домашней сети скрипт
+# делал три попытки по таймауту SSH и висел больше минуты - чем и задерживал
+# остановку службы сбора.
+if ! ssh "${SSH_OPTS[@]}" -o ConnectTimeout=5 "$SSH_HOST" true >/dev/null 2>&1; then
+  echo "дома не видно - отложено до следующего раза"
+  exit 0
+fi
 export CAR_PG="postgresql://car:${CAR_PG_PASSWORD}@127.0.0.1:${LOCAL_PORT}/car"
 
 TUNNEL=""

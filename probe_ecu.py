@@ -71,23 +71,43 @@ def main():
         print(f"{'байт8':<7} " + " ".join(f"{n[:16]:<17}" for n in markers))
         print("-" * (8 + 18 * len(markers)))
 
+        def safe(fn, *a):
+            """Любая попытка изолирована: неизвестный канал может подвесить USB,
+            и тогда устройство надо поднимать заново, а не падать целиком."""
+            nonlocal lex
+            try:
+                return fn(*a)
+            except Exception as e:
+                log.warning(f"устройство не ответило ({type(e).__name__}), переподключаюсь")
+                try:
+                    lex.disconnect()
+                except Exception:
+                    pass
+                lex = Lexia()
+                if not lex.connect():
+                    return None
+                lex.drain()
+                if not lex.device_boot(verbose=False):
+                    return None
+                lex.boot(verbose=False)
+                return None
+
         for b8 in b8s:
-            # заново выставляем канал
-            lex.transact(session_frame(b8))
+            safe(lex.transact, session_frame(b8))
             cells = []
             for name, did in markers.items():
-                payload, _ = lex.transact(read_multi_frame([did]))
-                got = parse_multi(payload, {did: 4})
+                res = safe(lex.transact, read_multi_frame([did]))
+                payload = res[0] if res else None
+                got = parse_multi(payload, {did: 4}) if payload else {}
                 if got:
                     cells.append(f"{'ОТВЕТ ' + got[did].hex():<17}")
                 elif payload and payload[0] == 0x7F:
                     code = payload[2] if len(payload) > 2 else 0
                     cells.append(f"{'7F ' + f'{code:02X}':<17}")
                 else:
-                    cells.append(f"{'-':<17}")
-            print(f"0x{b8:02X}    " + " ".join(cells))
-            # возвращаемся в известное рабочее состояние
-            lex.boot(verbose=False)
+                    cells.append(f"{'нет ответа':<17}")
+            print(f"0x{b8:02X}    " + " ".join(cells), flush=True)
+            safe(lex.boot, False)
     finally:
         lex.disconnect()
     print()
