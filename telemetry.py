@@ -144,6 +144,13 @@ def decode(did: int, raw: bytes):
             return None, unit
         if did in NO_DATA_UNITLESS and val in (full, full - 1):
             return None, unit
+        # У безразмерных многобайтовых полей все единицы - это "не запрограммировано",
+        # законным значением так не бывает. Так на графики попадала дата
+        # изготовления 16777215 (0xFFFFFF, три байта): единицы у неё нет, в списке
+        # NO_DATA_UNITLESS её тоже нет, и заглушка проходила как число. Однобайтовые
+        # тут НЕ трогаем: у счётчиков 0xFF законен, для них есть точный список.
+        if not unit and len(chunk) >= 2 and val in (full, full - 1):
+            return None, unit
 
     if is_bitfield:
         try:

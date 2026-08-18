@@ -30,9 +30,20 @@ def bad_values(did: int):
     if not entries:
         return set(), (None, None)
     e = entries[0]
-    if e["mask"] is not None or not e["unit"]:
-        return set(), (None, None)          # флаги и безразмерные не трогаем
+    if e["mask"] is not None:
+        return set(), (None, None)          # флаги не трогаем
     ln = e["ln"] or 1
+    if not e["unit"]:
+        # Безразмерные раньше пропускались целиком, и в базе остались заглушки:
+        # дата изготовления 16777215 (0xFFFFFF) и два условия удержания шины 254
+        # (0xFE). Многобайтовые чистим по общему правилу, однобайтовые - только
+        # по точному списку из telemetry, где 0xFF у счётчиков законен.
+        from telemetry import NO_DATA_UNITLESS
+        if ln < 2 and did not in NO_DATA_UNITLESS:
+            return set(), (None, None)
+        full = (1 << (8 * ln)) - 1
+        f, o = e["factor"] or 1.0, e.get("offset", 0.0)
+        return {round(full * f + o, 3), round((full - 1) * f + o, 3)}, (None, None)
     full = (1 << (8 * ln)) - 1
     factor = e["factor"] or 1.0
     offset = e.get("offset", 0.0)
