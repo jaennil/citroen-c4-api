@@ -137,6 +137,19 @@ def main():
                     try: lex.disconnect()
                     except Exception: pass
                     lex = None
+                # Освобождаем захват НЕ через объект: если disconnect упал на
+                # ошибке ввода-вывода, дескриптор утекает и устройство остаётся
+                # занятым при живом процессе. Находим заново и отпускаем принудительно.
+                try:
+                    import usb.core, usb.util
+                    from lexia_proto import PRODUCT_ID, VENDOR_ID
+                    dev = usb.core.find(idVendor=VENDOR_ID, idProduct=PRODUCT_ID)
+                    if dev is not None:
+                        try: usb.util.release_interface(dev, 0)
+                        except Exception: pass
+                        usb.util.dispose_resources(dev)
+                except Exception as e:
+                    log.warning(f"не удалось принудительно отпустить USB: {e}")
                 paused = True
             time.sleep(3)
             continue
