@@ -358,52 +358,67 @@ UNIT_MAP = {"°C": "celsius", "V": "volt", "%": "percent", "km": "lengthkm",
             "month(s)": "", "A": "amp", "Nm": "", "s": "s"}
 
 
-def observed_counts(db_path="car.db"):
-    """Сколько значений записано по каждому параметру.
+HERE = os.path.dirname(os.path.abspath(__file__))
+CLUSTER_STATS = os.path.join(HERE, "cluster_stats.psv")
 
-    Нужно, чтобы не рисовать панели, которые гарантированно покажут "No data":
-    часть параметров BSI на этой машине всегда отдаёт маркер "нет значения"
-    (напряжение АКБ, заряд АКБ, дней до ТО), и после фильтрации от них не
-    остаётся ни одной точки.
+
+def cluster_stats(path=CLUSTER_STATS):
+    """Статистика параметров из АРХИВА в кластере: имя -> (n, различных, макс).
+
+    Источник данных для Grafana - кластер, а не локальный буфер, поэтому решать
+    "рисовать ли панель" надо по кластеру. Локальный car.db периодически чистится
+    (cleanup.py выносит мусорные значения), и из-за расхождения 17 параметров с
+    данными в архиве вообще не попадали на дашборд. Снимается ./fetch-stats.sh.
     """
+    if not os.path.exists(path):
+        return {}
+    out = {}
+    for line in open(path):
+        f = line.rstrip("\n").split("|")
+        if len(f) < 6:
+            continue
+        try:
+            out[f[0]] = (int(f[2]), int(f[3]), abs(float(f[5])))
+        except ValueError:
+            continue
+    return out
+
+
+def local_stats(db_path=os.path.join(HERE, "car.db")):
+    """То же из локального буфера - запас на случай, когда кластер недоступен."""
     if not os.path.exists(db_path):
         return {}
     try:
         db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         rows = db.execute(
-            "SELECT p.name, count(v.value) FROM param p "
+            "SELECT p.name, count(v.value), count(DISTINCT v.value), "
+            "       max(abs(v.value)) FROM param p "
             "LEFT JOIN reading v ON v.param_id = p.id GROUP BY p.id").fetchall()
         db.close()
-        return dict(rows)
+        return {n: (c, d, m or 0.0) for n, c, d, m in rows}
     except sqlite3.Error:
         return {}
 
 
-def observed_max(db_path="car.db"):
-    """Наблюдаемый максимум по каждому параметру - из локального буфера.
-
-    Нужен, чтобы не сваливать в одну панель величины разных порядков: пробег
-    9999 км рядом с 200 км делает второй ряд визуально плоским. Если базы нет,
-    группировка просто останется только по единицам измерения.
-    """
-    if not os.path.exists(db_path):
-        return {}
-    try:
-        db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        rows = db.execute(
-            "SELECT p.name, max(abs(v.value)) FROM param p "
-            "JOIN reading v ON v.param_id = p.id GROUP BY p.id").fetchall()
-        db.close()
-        return {n: m for n, m in rows if m}
-    except sqlite3.Error:
-        return {}
-
-
-MAXES = observed_max()
-COUNTS = observed_counts()
+STATS = cluster_stats() or local_stats()
+SOURCE = "кластер" if cluster_stats() else "локальный буфер"
+COUNTS = {n: v[0] for n, v in STATS.items()}
+DISTINCT = {n: v[1] for n, v in STATS.items()}
+MAXES = {n: v[2] for n, v in STATS.items() if v[2]}
 # Фильтр включаем только когда данных набралось достаточно, иначе на пустой базе
 # он выкинул бы вообще всё.
 FILTER_EMPTY = sum(1 for v in COUNTS.values() if v) > 50
+
+
+def is_constant(name):
+    """Значение не менялось ни разу за всю историю.
+
+    Такому параметру график не нужен: это прямая линия, занимающая пол-панели.
+    Место ему в таблице текущих значений. Порог по числу замеров нужен, чтобы
+    не записать в константы параметр, который просто измерен два раза.
+    """
+    n, d, _ = STATS.get(name, (0, 0, 0.0))
+    return n >= 20 and d <= 1
 
 
 def has_data(name):
@@ -431,6 +446,12 @@ def categorise():
         item = (name, unit, did)
         if name.startswith("CFG_"):
             groups["Конфигурация"].append(item)
+        elif is_constant(name):
+            # За всю историю значение не менялось - график был бы прямой линией.
+            # Таких на этой машине большинство: флаги, пороги обслуживания,
+            # настройки меню. В таблице текущих значений они читаются, а панелей
+            # не занимают.
+            groups["Состояния и флаги"].append(item)
         elif unit == "°C" or "TEMPERATURE" in name:
             groups["Температуры"].append(item)
         elif unit in ("V", "A") or "TENSION" in name or "COURANT" in name:
@@ -442,6 +463,34 @@ def categorise():
         else:
             groups["Состояния и флаги"].append(item)
     return groups
+
+
+# Обзор - набор, отобранный руками. Панели здесь стоят по решению, а не по
+# автоматике: часть параметров пока постоянна (уровень масла, счётчик поездки,
+# средний расход), но они меняются со временем, поэтому проверка дашборда не
+# должна считать их вырожденными графиками. audit_dashboard.py читает этот
+# список именно для того, чтобы отличать намеренное от случайного.
+# Напряжение АКБ в покое (DA4D) убрано: показывает неизменные 16.1 В, что для
+# покоящейся батареи невозможно. Сырое значение выходит 0x01FE, а 0xFE - это
+# штатная заглушка "нет данных" у PSA, то есть в базе DiagBox у этого поля,
+# похоже, завышена длина, и параметр на этой машине просто недоступен - как и
+# DA46, который честно отдаёт FFFE. Панель с порогами при таком значении не
+# информирует, а вводит в заблуждение. Вернуть, когда замер мультиметром и
+# probe_raw.py DA4D покажут настоящую раскладку байт.
+OVERVIEW = [
+    ("Обороты", "MP_REGIME_MOTEUR_AFFICHE", "rotrpm"),
+    ("Скорость", "MP_VITESSE_VEHICULE_a", "velocitykmh"),
+    ("Температура масла", "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE", "celsius"),
+    ("Питание BSI", "MP_TENSION_ALIMENTION_BSI", "volt"),
+    ("Пробег общий", "MP_KILOMETRAGE_TOTAL", "suffix: км"),
+    ("Топливо в баке", "MP_NIVEAU_CARBURANT_MESURE", "litre"),
+    ("Запас хода", "MP_AUTONOMIE_CARBURANT_CALCULE", "suffix: км"),
+    ("Температура за бортом", "MP_TEMPERATURE_EXTERIEURE", "celsius"),
+    ("Уровень масла", "MP_NIVEAU_HUILE_MOTEUR_MOYENNE", "percent"),
+    ("Пробег поездки 1", "MP_KILOMETRAGE_TRAJET1", "suffix: км"),
+    ("Расход средний", "MP_CONSOMMATION_CARBURANT_MOYENNE_TRAJET1", "suffix: л/100км"),
+    ("Км до ТО", "MP_NOMBRE_KILOMETRE_AVANT_MAINTENANCE", "suffix: км"),
+]
 
 
 def build():
@@ -459,21 +508,6 @@ def build():
     # Пробег - через suffix, иначе Grafana масштабирует 195446 км в "195.4 Mm".
     # Скорость рыскания тоже убрана: BSI отдаёт по ней только знаковый маркер
     # 0x7FFF (3276.7 °/s), реальных данных на этой машине нет.
-    OVERVIEW = [
-        ("Обороты", "MP_REGIME_MOTEUR_AFFICHE", "rotrpm"),
-        ("Скорость", "MP_VITESSE_VEHICULE_a", "velocitykmh"),
-        ("Температура масла", "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE", "celsius"),
-        ("Питание BSI", "MP_TENSION_ALIMENTION_BSI", "volt"),
-        ("Пробег общий", "MP_KILOMETRAGE_TOTAL", "suffix: км"),
-        ("Топливо в баке", "MP_NIVEAU_CARBURANT_MESURE", "litre"),
-        ("Запас хода", "MP_AUTONOMIE_CARBURANT_CALCULE", "suffix: км"),
-        ("Температура за бортом", "MP_TEMPERATURE_EXTERIEURE", "celsius"),
-        ("Напряжение АКБ в покое", "MP_TENSION_BATTERIE_AU_REPOS", "volt"),
-        ("Уровень масла", "MP_NIVEAU_HUILE_MOTEUR_MOYENNE", "percent"),
-        ("Пробег поездки 1", "MP_KILOMETRAGE_TRAJET1", "suffix: км"),
-        ("Расход средний", "MP_CONSOMMATION_CARBURANT_MOYENNE_TRAJET1", "suffix: л/100км"),
-        ("Км до ТО", "MP_NOMBRE_KILOMETRE_AVANT_MAINTENANCE", "suffix: км"),
-    ]
     known = {e["name"] for e in CATALOG}
     col = 0
     for title, name, unit in OVERVIEW:
