@@ -35,6 +35,9 @@ from telemetry import ALIASES, DRIVE_FULL_EVERY, DRIVE_HOT, decode, name_of
 log = logging.getLogger("drive")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Файл-флаг для опытов: пока он есть, сбор не занимает USB и ждёт. Так не нужно
+# каждый раз останавливать службу через sudo, чтобы поработать с Lexia руками.
+PAUSE_FLAG = os.path.expanduser("~/.config/c4-can/pause")
 _stop = False
 
 
@@ -125,7 +128,21 @@ def main():
     idle_since = None
     t_report = time.time()
 
+    paused = False
     while not _stop:
+        if os.path.exists(PAUSE_FLAG):
+            if not paused:
+                log.info(f"пауза: есть файл {PAUSE_FLAG}, освобождаю USB и жду")
+                if lex:
+                    try: lex.disconnect()
+                    except Exception: pass
+                    lex = None
+                paused = True
+            time.sleep(3)
+            continue
+        if paused:
+            log.info("пауза снята, продолжаю сбор")
+            paused = False
         if lex is None:
             lex = connect()
             if lex is None:
