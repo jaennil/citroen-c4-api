@@ -59,4 +59,6 @@ cat <<'STEPS'
 
 STEPS
 
-exec python3 "$HERE/sniff_lexia_full.py" "$OUT"
+# Именно без exec: exec заменяет процесс оболочки, вместе с ней пропадает trap,
+# и уборка не выполняется - флаг паузы остаётся стоять, а сбор молча висит.
+python3 "$HERE/sniff_lexia_full.py" "$OUT"

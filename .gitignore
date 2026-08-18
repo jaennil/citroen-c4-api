@@ -7,3 +7,6 @@ __pycache__/
 car.db
 car.db-*
 drive.log
+
+# сырой дамп переключения блоков хранится сжатым (switch.log.gz)
+switch.log
