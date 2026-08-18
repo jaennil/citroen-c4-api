@@ -323,14 +323,14 @@ LATEST_SQL = (
 )
 
 
-def latest_table(pid, title, names, gh=16):
+def latest_table(pid, title, names, gh=16, gy=0):
     """Таблица последних значений: для дискретных состояний это полезнее графика."""
     return {
         "id": pid,
         "type": "table",
         "title": title,
         "datasource": DS,
-        "gridPos": {"h": gh, "w": 24, "x": 0, "y": 0},
+        "gridPos": {"h": gh, "w": 24, "x": 0, "y": gy},
         "targets": [{"refId": "A", "datasource": DS, "format": "table",
                      "rawQuery": True,
                      "rawSql": LATEST_SQL.format(names=sql_in(names))}],
@@ -340,7 +340,14 @@ def latest_table(pid, title, names, gh=16):
     }
 
 
-def row(pid, title, gy, collapsed=True, panels=None):
+def row(pid, title, gy, collapsed=False, panels=None):
+    """Разделитель-заголовок. Свёрнутых строк здесь БОЛЬШЕ НЕТ.
+
+    Раньше тематические группы были свёрнутыми строками, и до любого графика
+    надо было доклацываться. Теперь всё лежит в один уровень: строка - просто
+    подпись, панели идут за ней в общей сетке. Плата за это - все запросы
+    выполняются сразу при открытии, а не по мере раскрытия групп.
+    """
     return {"id": pid, "type": "row", "title": title, "collapsed": collapsed,
             "gridPos": {"h": 1, "w": 24, "x": 0, "y": gy}, "panels": panels or []}
 
@@ -545,40 +552,44 @@ def build():
     for title, items in categorise().items():
         if not items:
             continue
-        if title in TABLE_GROUPS:
-            inner = [latest_table(pid, f"{title}: текущие значения",
-                                  [n for n, _, _ in items])]
-            pid += 1
-        else:
-            inner = []
-            iy = 0
-            # Сначала разбиваем по единицам измерения: иначе в одну панель попадают
-            # пробег в 195000 км и "дней до ТО", и второе не видно вообще.
-            by_unit = {}
-            for it in items:
-                by_unit.setdefault((it[1], magnitude(it[0])), []).append(it)
-            # по 4 параметра на панель, чтобы легенда оставалась читаемой
-            chunks = []
-            for key in sorted(by_unit, key=lambda k: (k[0], k[1])):
-                grp = by_unit[key]
-                chunks += [grp[j:j + 4] for j in range(0, len(grp), 4)]
-            for i, chunk in enumerate(chunks):
-                i = i * 4
-                unit = UNIT_MAP.get(chunk[0][1], "")
-                # заголовок панели - из ручных имён; DID обязателен, иначе
-                # ru_label не найдёт запись и свалится в грубый автоперевод
-                pan = panel(pid, " · ".join(ru_label(d, n)[:26] for n, _, d in chunk),
-                            (i // 4 % 2) * 12, iy, 12, 8,
-                            [target([n for n, _, _ in chunk])], unit)
-                if len(chunk) == 1:
-                    pan = with_thresholds(pan, chunk[0][0])
-                inner.append(pan)
-                pid += 1
-                if i // 4 % 2:
-                    iy += 7
-        panels.append(row(pid, f"{title} ({len(items)})", y, collapsed=True, panels=inner))
+        panels.append(row(pid, f"{title} ({len(items)})", y))
         pid += 1
         y += 1
+
+        if title in TABLE_GROUPS:
+            # Высота по числу строк: под 243 флага нужна прокрутка внутри панели,
+            # а под один параметр конфигурации таблица в 16 единиц - пустое место.
+            gh = max(5, min(16, 3 + len(items)))
+            panels.append(latest_table(pid, f"{title}: текущие значения",
+                                       [n for n, _, _ in items], gh=gh, gy=y))
+            pid += 1
+            y += gh
+            continue
+
+        # Сначала разбиваем по единицам измерения и порядку величины: иначе в одну
+        # панель попадают пробег в 195000 км и "дней до ТО", и второе не видно.
+        by_unit = {}
+        for it in items:
+            by_unit.setdefault((it[1], magnitude(it[0])), []).append(it)
+        chunks = []
+        for key in sorted(by_unit, key=lambda k: (k[0], k[1])):
+            grp = by_unit[key]
+            chunks += [grp[j:j + 4] for j in range(0, len(grp), 4)]
+
+        # по две панели в строку, высота 8 - та же, что в gridPos ниже. Раньше
+        # шаг был 7 при высоте 8, и панели наезжали друг на друга.
+        for i, chunk in enumerate(chunks):
+            unit = UNIT_MAP.get(chunk[0][1], "")
+            # заголовок панели - из ручных имён; DID обязателен, иначе ru_label
+            # не найдёт запись и свалится в грубый автоперевод
+            pan = panel(pid, " · ".join(ru_label(d, n)[:26] for n, _, d in chunk),
+                        (i % 2) * 12, y + (i // 2) * 8, 12, 8,
+                        [target([n for n, _, _ in chunk])], unit)
+            if len(chunk) == 1:
+                pan = with_thresholds(pan, chunk[0][0])
+            panels.append(pan)
+            pid += 1
+        y += 8 * ((len(chunks) + 1) // 2)
 
     return {
         "uid": "citroen-c4",
