@@ -7,13 +7,23 @@
     задана вторая ось;
   * разные единицы измерения в одной панели;
   * панели без тултипа (у stat его в Grafana нет вообще, поэтому stat запрещён);
-  * серии, по которым в базе нет ни одного значения - панель покажет "No data".
+  * серии, по которым в базе нет ни одного значения - панель покажет "No data";
+  * константы на графиках - значение не менялось ни разу, график вырождается в
+    прямую линию и зря занимает панель, место такому в таблице;
+  * данные, которых нет ни на одной панели - параметр собирается, а посмотреть
+    его негде. Так пропадали 17 параметров, когда состав панелей решался по
+    локальному буферу, а Grafana читала архив кластера;
+  * один параметр на многих панелях - не всегда изъян (обзор дублирует нарочно),
+    но четыре вхождения подряд стоит заметить.
 
-Данные о диапазонах берутся из локального буфера car.db.
+Диапазоны берутся из локального car.db, а состав данных - из cluster_stats.psv,
+снятого ./fetch-stats.sh: источник для Grafana - архив кластера, и судить о
+наличии данных надо по нему.
 
     ./.venv/bin/python audit_dashboard.py
 """
 
+import collections
 import json
 import re
 import sqlite3
@@ -107,8 +117,38 @@ def main():
                                  "нужна вторая ось или разделить панели"))
 
     print(f"панелей проверено: {n_panels}, из них многосерийных: {n_multi}")
+    # --- проверки по составу данных в архиве кластера ---
+    import make_dashboard as md
+    seen = collections.Counter()
+    graph_of = {}
+    for p in walk(dash):
+        for t in p.get("targets", []):
+            for n in re.findall(r"'([A-Z0-9_a-z]+)'", t.get("rawSql", "")):
+                if n not in md.STATS:
+                    continue
+                seen[n] += 1
+                if p.get("type") == "timeseries":
+                    graph_of.setdefault(n, p.get("title", ""))
+
+    # Обзорные панели отобраны руками: их постоянство временное (счётчик поездки
+    # стоит на 9999, уровень масла не менялся за двое суток), и выносить их в
+    # таблицу нельзя - это осознанное решение вместе с порогами.
+    curated = {name for _, name, _ in md.OVERVIEW}
+    for n, title in sorted(graph_of.items()):
+        if n not in curated and md.is_constant(n):
+            problems.append(("константа на графике", title[:44], n))
+    for n, (cnt, _, _) in sorted(md.STATS.items()):
+        if cnt > 0 and n not in seen:
+            problems.append(("есть данные, но нет панели", n, f"{cnt} значений"))
+    for n, c in sorted(seen.items()):
+        # Обороты и скорость намеренно повторяются: обзор, совмещённый график с
+        # двумя осями и панель отношения для расчёта передачи.
+        if c > 3 and n not in curated:
+            problems.append(("параметр на многих панелях", n, f"{c} панелей"))
+
     if not problems:
-        print("изъянов не найдено")
+        print(f"изъянов не найдено (состав данных - {md.SOURCE}, "
+              f"{len(md.STATS)} параметров)")
         return 0
     print(f"\nнайдено проблем: {len(problems)}")
     for kind, title, detail in problems:
