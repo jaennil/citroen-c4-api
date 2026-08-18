@@ -10,3 +10,4 @@ drive.log
 
 # сырой дамп переключения блоков хранится сжатым (switch.log.gz)
 switch.log
+ecu_req_index.json
