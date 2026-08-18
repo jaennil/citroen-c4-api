@@ -164,18 +164,34 @@ def link_status(resp: bytes):
 
 
 def extract_payload(resp: bytes):
-    """Вытащить полезную нагрузку UDS из ответа Lexia.
+    """Вытащить полезную нагрузку ответа ЭБУ из ответа Lexia.
 
-    Ищем маркер 12 <len> 00 05, дальше <len> байт - это ответ ECU.
+    Заголовок ответа фиксированной длины, нагрузка начинается с 29-го байта:
+
+        ... 01 <фмт> <len> 00 05 <len байт ответа>
+                     ^25  ^26  ^27 ^28
+
+    Байт 25 - НЕ константа: у BSI там 0x12, у KWP-блока двигателя 0x08. Раньше
+    он считался маркером, и из-за этого все ответы блоков, кроме BSI, молча
+    отбрасывались как нераспознанные. Опознаём по паре 00 05 и длине.
     """
     if not resp:
         return None
+    # штатное место: так разбирается подавляющая часть ответов
+    if len(resp) > 29 and resp[27] == 0x00 and resp[28] == 0x05:
+        n = resp[26]
+        pl = resp[29:29 + n]
+        if len(pl) == n and n > 0:
+            return pl
+    # запасной поиск - ответ мог приехать со сдвигом (многокадровый ISO-TP)
     for i in range(len(resp) - 4):
-        if resp[i] == 0x12 and resp[i + 2] == 0x00 and resp[i + 3] == 0x05:
+        if resp[i + 2] == 0x00 and resp[i + 3] == 0x05:
             n = resp[i + 1]
-            payload = resp[i + 4:i + 4 + n]
-            if len(payload) == n and n > 0:
-                return payload
+            pl = resp[i + 4:i + 4 + n]
+            # первый байт обязан быть кодом ответа: 41-7F положительные и 7F
+            # отрицательный по UDS, C1 - положительный StartCommunication KWP
+            if len(pl) == n and n > 0 and pl[0] >= 0x40:
+                return pl
     return None
 
 
@@ -255,6 +271,20 @@ class Lexia:
         self._w(bytes.fromhex(ACK))
         time.sleep(POLL_SETTLE)
         return extract_payload(raw), raw
+
+    def transact_frames(self, frames, poll_limit: int = 60):
+        """Команда из нескольких USB-кадров (фрагментированная).
+
+        Таблица настройки протокола не влезает в один кадр: DiagBox пишет её
+        двумя - у первого в байте 3 стоит 0x80 (первый, продолжение следует), у
+        последнего 0x40 (последний). Опрос готовности делается ОДИН раз, после
+        последнего фрагмента: если опрашивать после каждого, устройство отвечает
+        отказом на незавершённую команду.
+        """
+        for f in frames[:-1]:
+            self._w(f)
+            time.sleep(POLL_SETTLE)
+        return self.transact(frames[-1], poll_limit=poll_limit)
 
     def init_session(self):
         return self.transact(bytes.fromhex(INIT_FRAME))
