@@ -83,6 +83,22 @@ def ascii_of(b: bytes) -> str:
     return s if any(c.isalnum() for c in s) else ""
 
 
+def is_kwp(key) -> bool:
+    """KWP-блок или UDS - видно по финальной команде входа.
+
+    Полезная нагрузка 81 - это StartCommunication из KWP2000, 10 xx -
+    DiagnosticSessionControl из UDS. Различать обязательно: если послать
+    KWP-блоку сразу UDS-запрос 22 F080, только что поднятая связь рвётся, и блок
+    замолкает на всё остальное. Измерено на двигателе: при опросе с UDS вперёд он
+    молчал, при опросе с 21 - отвечал.
+    """
+    fr = ENTRY.get(key)
+    if not fr:
+        return False
+    b = bytes.fromhex(fr[-1])
+    return b[24:-1][:1] == b"\x81"
+
+
 def probe_one(lex, tx, rx, uds=None, kwp=None, verbose=False):
     """Войти в блок и попробовать его опознать. Возвращает список строк-находок."""
     found = []
@@ -90,6 +106,17 @@ def probe_one(lex, tx, rx, uds=None, kwp=None, verbose=False):
         enter(lex, tx, rx, verbose=verbose)
     except Exception as e:
         return [f"вход не удался: {type(e).__name__}: {e}"]
+
+    # У KWP-блока сперва спрашиваем по-KWP и UDS не трогаем вовсе, иначе рвём связь.
+    if is_kwp((tx, rx)):
+        for lid in (kwp if kwp is not None else IDENT_KWP):
+            pl = ask(lex, bytes([0x21, lid]))
+            if pl and pl[0] == 0x61:
+                data = pl[2:]
+                found.append(f"21 {lid:02X} -> {data.hex()[:60]} {ascii_of(data)}".rstrip())
+            elif pl and pl[0] == 0x7F:
+                found.append(f"21 {lid:02X} -> отказ NRC {pl[2]:02X}")
+        return found
 
     for did in (uds if uds is not None else IDENT_UDS):
         pl = ask(lex, bytes([0x22, (did >> 8) & 0xFF, did & 0xFF]))
