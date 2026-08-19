@@ -234,3 +234,62 @@ a MITM works.
 `ecu_groups_jsons/` (4305 ECU catalogs), `dtc_groups_lightweight/`, `sw_mapping.json`
 (33203 rows, part number -> ECU model; only ~9910 keys are real 10-digit part numbers, the
 rest are row-index artefacts). No more network round-trips to look up parameters.
+
+## MITM hardware for the high beam - shopping list and order of work
+
+The diagnostic route to the main beam is closed for good (see above: `2F D82B` does not
+exist on this BSI, and BSM_2010 has no actuator groups at all). What is left is a
+man-in-the-middle on the body bus between the stalk (COM2008P, `0x742`) and the BSI:
+intercept the stalk frame, set the high-beam bit, pass it on. The BSI then drives the
+relays itself, so the telltale lights and the stalk can still override.
+
+Teensy 4.0 is ordered. What else is needed:
+
+| item | qty | why |
+|---|---|---|
+| SN65HVD230 CAN transceiver breakout | **2** | one per side of the cut. A MITM is not a tap - the bus is cut and the Teensy sits in the middle, so it needs a transceiver facing the stalk and another facing the BSI. Buying one is the classic mistake. |
+| 12 V -> 5 V step-down (MP1584 or similar) | 1 | powers the Teensy from the car |
+| fuse 2-3 A + TVS or zener on the 12 V input | 1 | automotive 12 V has load-dump spikes |
+| micro-USB cable | 1 | programming the Teensy 4.0 |
+| inline connector pair / spare pigtail, crimps, heat-shrink | 1 | so the cut is reversible and the car can be put back |
+| perfboard, pin headers, small enclosure | - | not strictly needed but the thing lives in a car |
+
+Two traps worth knowing before soldering:
+
+* **The 120 Ohm terminator on the breakout.** Waveshare-style SN65HVD230 boards carry a
+  120 Ohm terminating resistor, jumper-selectable on some revisions, hard-wired on others.
+  The bus is already terminated at its ends; adding two more terminators mid-bus will
+  disturb it. Remove or un-jumper both.
+* **3.3 V logic.** SN65HVD230 is a 3.3 V transceiver, which is why it suits the Teensy
+  directly. MCP2551 and TJA1050 are 5 V parts and would need level shifting on RX -
+  do not substitute them casually.
+
+CAN1 and CAN2 on a Teensy 4.0 are both on top-side pins, which is enough for a two-bus
+MITM; CAN3 sits on the underside pads and is the reason 4.1 was considered. Library is
+FlexCAN_T4.
+
+### Measure before cutting
+
+The transceiver choice is **not yet verified on this car** - it rests on PSA AEE2010 using
+a standard differential physical layer at 125 kbps on the body bus. Two measurements at
+the stalk connector settle it, ignition on:
+
+1. CAN_H and CAN_L to ground at idle. Both near 2.5 V means standard differential and
+   SN65HVD230 is correct. If one line sits near 0 V and the other near 5 V, the bus is the
+   fault-tolerant low-speed variant and the part must be TJA1055 instead - a different
+   chip, not a drop-in.
+2. Bit rate, confirmed by sniffing rather than assumed.
+
+### Order of work
+
+Do not cut anything first. The Teensy with **one** transceiver can listen passively on a
+tap:
+
+1. Listen-only. Confirm the stalk frame `0x094` and that bit 4 is the high-beam inverter
+   and bit 3 the flash - the bit map comes from the COM2008P description, not from
+   measurement on this car.
+2. Cross-check against the BSM: `22D440` on `0x747` returns `MP_COMMANDE_FEU_ROUTE_G/D`,
+   the commanded state of the left and right high-beam outputs. That is an independent
+   readout of whether the lamps were actually asked for, and it is how a working MITM will
+   be proved.
+3. Only then cut the pair and go in-line with both transceivers.
