@@ -43,13 +43,31 @@ class Store:
         self._ids = {}
 
     def param_id(self, did: int, name: str, unit: str = "") -> int:
-        if did in self._ids:
-            return self._ids[did]
+        """Строка параметра по ИМЕНИ, с выдачей синтетического did новым именам.
+
+        Раньше опознание шло по did, и это годилось, пока читалась одна BSI. Как
+        только добавились другие блоки, схема развалилась: у KWP-параметров
+        двигателя своего did нет вовсе, поэтому им ставился 0 - а поле did
+        объявлено UNIQUE, и все 189 параметров схлопнулись бы в одну строку. Плюс
+        у разных блоков DID совпадают: 22D400 есть и у BSI, и у BSM, и это разные
+        величины.
+
+        Поэтому ключ - имя (у чужих блоков оно с приставкой рода блока, вида
+        MEV17_4_2:MP_...), а did остаётся техническим и уникальным. Новым именам
+        без своего did выдаётся номер выше 16-битного диапазона настоящих DID,
+        один раз: дальше он читается из базы, поэтому история не рвётся.
+        """
+        if name in self._ids:
+            return self._ids[name]
         from ru_labels import label as ru_label
         lab = ru_label(did, name)
-        cur = self.db.execute("SELECT id FROM param WHERE did=?", (did,))
-        row = cur.fetchone()
+        row = self.db.execute("SELECT id FROM param WHERE name=?", (name,)).fetchone()
         if row is None:
+            taken = did <= 0 or self.db.execute(
+                "SELECT 1 FROM param WHERE did=?", (did,)).fetchone() is not None
+            if taken:
+                top = self.db.execute("SELECT COALESCE(MAX(did), 0) FROM param").fetchone()[0]
+                did = max(top + 1, 0x10000)
             cur = self.db.execute(
                 "INSERT INTO param(did, name, unit, label) VALUES (?,?,?,?)",
                 (did, name, unit, lab))
@@ -59,7 +77,7 @@ class Store:
             # дозаполняем ярлык у баз, созданных до его появления
             self.db.execute("UPDATE param SET label=? WHERE id=? AND (label IS NULL OR label='')",
                             (lab, pid))
-        self._ids[did] = pid
+        self._ids[name] = pid
         return pid
 
     def write(self, samples, ts=None):
