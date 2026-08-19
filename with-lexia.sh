@@ -25,22 +25,35 @@ cleanup() { rm -f "$FLAG"; }
 trap cleanup EXIT INT TERM
 touch "$FLAG"
 
-# Если служба не активна, ждать нечего: устройство ничьё, надо только убедиться,
-# что оно на шине. Пробную заявку на интерфейс тут делать ВРЕДНО - захват и
-# немедленное освобождение подряд ломает устройство, и следующая же команда
-# рукопожатия падает с I/O error. Проверено: сразу после переподключения обёртка с
-# пробным захватом валила device_boot, без него всё работает.
-if systemctl is-active --quiet c4-telemetry; then
-  echo "служба активна, жду пока отпустит USB..."
-  ok=0
+# Ждём, пока служба РЕАЛЬНО отпустит устройство.
+#
+# Проверяем не журнал и не пробный захват, а факт: держит ли процесс службы
+# открытый дескриптор на /dev/bus/usb. Журнал ненадёжен (старая запись совпадает),
+# а пробный захват прямо вредит - захват и немедленное освобождение подряд ломают
+# устройство, после чего падает уже первая команда рукопожатия.
+#
+# Ждать надо терпеливо: флаг паузы служба проверяет в начале своего цикла, а во
+# время вылазки в чужой блок это до 15 с, плюс инициализация после запуска по udev.
+holds_usb() {
+  local pid
+  pid=$(systemctl show -p MainPID --value c4-telemetry 2>/dev/null)
+  [ -n "$pid" ] && [ "$pid" != "0" ] || return 1
+  ls -l "/proc/$pid/fd" 2>/dev/null | grep -q "/dev/bus/usb"
+}
+
+if holds_usb; then
+  echo "служба держит USB, жду освобождения..."
+  freed=0
   for _ in $(seq 1 "$WAIT"); do
-    if ! systemctl is-active --quiet c4-telemetry; then ok=1; break; fi
-    # drive.py проверяет флаг раз в 3 с; ждём, пока он отпустит захват
-    if journalctl -u c4-telemetry --since "-$((WAIT+5)) seconds" 2>/dev/null \
-         | grep -q "освобождаю USB"; then ok=1; break; fi
+    holds_usb || { freed=1; break; }
     sleep 1
   done
-  [ "$ok" = 1 ] || { echo "сбор так и не отпустил USB за ${WAIT} с"; exit 1; }
+  if [ "$freed" != 1 ]; then
+    echo "сбор не отпустил USB за ${WAIT} с. Останови службу вручную:"
+    echo "    sudo systemctl stop c4-telemetry"
+    exit 1
+  fi
+  echo "служба отпустила устройство"
   sleep 2
 fi
 
