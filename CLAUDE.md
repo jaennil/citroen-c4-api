@@ -300,9 +300,9 @@ Teensy 4.0 has no radio, so the phone link is a separate module on a UART.
 
 | item | qty | note |
 |---|---|---|
-| HM-10 / AT-09 (CC2541) BLE-UART module | 1 | BLE, so it works from both iPhone and Android. 3.3 V logic, wires straight to a Teensy serial port |
-| DPDT signal relay, 5 V coil | 1 | the fail-safe bridge, see below. Two poles because both CAN_H and CAN_L are cut |
-| N-channel MOSFET or ULN2003 + flyback diode | 1 | the Teensy cannot drive a relay coil directly |
+| ESP32-WROOM-32 devkit | 1 | the radio. Covers both phone platforms and can stream the bus for debugging. See below on why not an HM-10 and not a C3/S3 |
+| DPDT signal relay, 5 V coil, **or** a 2-channel 5 V relay module | 1 | the fail-safe bridge, see below. Two poles because both CAN_H and CAN_L are cut. A 2-channel module already contains the driver and flyback diode |
+| N-channel MOSFET (BSS138, 2N7000) + 1N4148 flyback diode | 1 | only if using a bare relay - the Teensy cannot drive a coil directly |
 
 HC-05 is cheaper but it is Bluetooth SPP, which iOS does not allow without MFi - Android
 only. Pick HM-10 unless the phone is known to be Android forever.
