@@ -175,15 +175,36 @@ maps that number to a model.
 | `0x6B5/0x695` | 9803319180 | GEP | electric pump |
 | `0x6C8/0x628` | 9672044777 | VCI | - |
 | `0x760/0x660` | 9808620980 | RD5 | radio |
-| `0x6A8/0x688` | 9804436280 | MEV17.4.2 | engine - see below |
+| `0x6A8/0x688` | 9804436280 | Valeo V46 | engine (EC5) - see below |
 | `0x6AD/0x68D` | - | ESP81 | ABS/ESP |
 
 Engine and ABS are absent from `sw_mapping.json` (it covers body/comfort only) and were
-identified differently: request `2182` exists in only 17 ECU families - MEV17 among them,
-no ABS family - and in the capture it was sent to `0x6A8` and nowhere else, alongside the
-actuator requests `218700/218701` that match the MEV17 catalog's `VA*` groups. The engine
-is a 1.6 VTi (EP6C, code 5FS, family EC5), Euro 5, Bosch MEV17.4.2; DiagBox cannot
-auto-detect it (`script_reco_INJ.s` offers a manual list) so it must be picked by hand.
+identified differently: request `2182` narrows it to 17 ECU families and in the capture it
+was sent to `0x6A8` and nowhere else. DiagBox cannot auto-detect the injection ECU
+(`script_reco_INJ.s` offers a manual list) so it must be picked by hand.
+
+**The engine ECU is a Valeo V46, not the Bosch MEV17.4.2 that DiagBox's screen suggested,
+and getting that wrong cost real time.** The screen the owner reached offered
+`MEV17_4_2 -> 5FS MEV17.4.2 EURO 5`, so the MEV17 catalogue was used - and it decoded
+engine speed and supply voltage correctly, which looked like confirmation. It was not:
+those first bytes of the `21 C0 80 01` block sit in the same place across PSA ECUs of the
+era. The giveaway was oil temperature reading 1225 °C.
+
+What settled it was a number read off the car itself: `21 80` at `0x6A8` returns part
+number **9804436280**, which is a Valeo V46. That matches the owner's own statement that
+the engine is an **EC5** - an evolution of the TU5 family, not the EP6C/5FS the screen
+implied. Lesson: identify the ECU from what it reports, not from the menu that reached it.
+
+Picking the right V46 catalogue then needed a second pass, because Valeo has many. `VD46_*`
+is the obvious name but wrong: it reads over UDS (`22 D4xx`), and this block **goes silent
+on a UDS entry** while answering a KWP one. Measured both ways on the car. The family that
+fits is `V46_32_B7`, matching 5 of the 7 requests the block actually answered, all KWP.
+With it, `poll_all` returns 55 physically plausible values - intake air 29 °C, ECU supply
+14.4 V, throttle sensors 680 and 4350 mV, oxygen sensors 112 and 102 mV - where the MEV17
+catalogue had produced nonsense. Coolant temperature is `21 C0 80 01` byte 6 with
+**offset -50** (MEV17 said -48, which is why an earlier reading came out 97 °C instead of
+95 °C), and `MP_TEMP_EAU_NON_CORRIGEE` at `21 C7 80 01` gives the uncorrected sensor value -
+comparing the two is the direct test for a lying coolant sensor, and is still to be run.
 
 Identification by DB request-fingerprint is implemented in `id_ecus.py` but is only
 trustworthy when a whole request set is exclusive to one family - that is how BSM was
