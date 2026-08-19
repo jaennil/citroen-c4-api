@@ -314,7 +314,10 @@ serial-terminal path as an HC-05) and BLE for iOS, plus a WiFi web UI as a bonus
 config and log pulling at home. Cost is comparable to an HM-10.
 
 Take the **original ESP32-WROOM-32**, not an ESP32-C3 or -S3: the newer parts have BLE only
-and no Bluetooth Classic, so the SPP fallback disappears.
+and no Bluetooth Classic, so the SPP fallback disappears. That matters beyond the fallback -
+streaming the bus to the phone to watch the MITM work needs throughput. A busy 125 kbps
+body bus is on the order of 15 kB/s, which SPP carries comfortably and BLE only barely,
+depending on MTU and connection interval.
 
 **The ESP32 cannot replace the Teensy.** It has a single TWAI controller, and a MITM needs
 two independent CAN interfaces - one facing the stalk, one facing the BSI. Bolting on an
