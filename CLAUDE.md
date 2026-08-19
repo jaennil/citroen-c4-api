@@ -419,3 +419,46 @@ Plain text over the BLE UART is enough - `R1`/`R0` to force the beam, `S` for st
   the high beam latched on.
 * **The stalk always wins.** Any change the driver makes with the stalk cancels the
   override immediately. The physical control must never be the thing that stopped working.
+
+## Collecting more than the BSI
+
+`drive.py --ecus 6A8 --ecu-every 300` makes the collector leave the BSI every five minutes,
+enter another block, read its catalogue, and come back. Two things shape that design.
+
+The excursion is deliberately rare. Switching the channel plus reading takes several
+seconds, and the 2 Hz stream of rpm and speed stalls for that whole time - once every five
+minutes the hole is far rarer than the stream. Returning to the BSI afterwards is
+mandatory; without `enter(0x752, 0x652)` the next fast poll goes to the wrong block and
+comes back empty.
+
+`storage.param_id` now identifies a parameter by **name**, not by DID. Keying on DID worked
+only while the BSI was the sole source: KWP parameters have no DID at all, so they were
+written with `did=0`, and since the column is `UNIQUE` all 189 engine parameters would have
+collapsed into one row. DIDs also repeat across blocks - `22D400` exists on the BSI, on the
+BSM and on the airbag module, meaning different things. New names get a synthetic DID above
+the 16-bit range, allocated once and then read back from the database, so history does not
+fragment. Verified against a copy of the real buffer: the BSI parameter reused its existing
+row, 189 engine names produced 189 distinct rows, no duplicate DIDs, and the ids were
+stable across a restart. Non-BSI names carry the block's family as a prefix
+(`MEV17_4_2:MP_...`) precisely so two blocks cannot merge on a shared mnemonic.
+
+Untested: the excursion itself has never completed against the car - the Lexia was
+unplugged first. Next session, run `drive.py --ecu-every 15` against a copy of `car.db` and
+confirm engine rows appear before letting the service do it.
+
+## A real fault found while testing (2026-08-19)
+
+The engine has two stored codes, read with KWP `17 FF 00`: `57 02 22 99 01 01 16 01`, i.e.
+`2299` and `0116`. The second is P0116, coolant temperature circuit range/performance -
+which matches the owner's own diagnosis of an intermittently dying sensor and explains the
+cooling fan running hard, since a stored fault keeps the fan in fail-safe even while the
+live reading is fine. Live coolant was steady at 97 °C over ten consecutive samples, so the
+sensor was behaving at that moment.
+
+A caution about that reading: `MP_TEMPERATURE_EAU_MOTEUR` has `offset = -48`, and comparing
+an offset-applied value against a raw byte produced a phantom "temperature jumping from 92
+to 143 °C". There was no jump. Apply the catalogue's factor and offset before drawing any
+conclusion.
+
+Clearing the codes would test the fan theory cheaply, but that is a **write** to the engine
+ECU and everything so far has been read-only - ask before doing it.
