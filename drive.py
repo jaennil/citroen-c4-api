@@ -41,6 +41,26 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # Файл-флаг для опытов: пока он есть, сбор не занимает USB и ждёт. Так не нужно
 # каждый раз останавливать службу через sudo, чтобы поработать с Lexia руками.
 PAUSE_FLAG = os.path.expanduser("~/.config/c4-can/pause")
+
+# Частый лёгкий замер чужого блока: только эти параметры, а не весь каталог.
+# Полный снимок двигателя - это 13 запросов и ~15 с, и раз в пять минут он слишком
+# редок, чтобы поймать перемежающуюся неисправность датчика температуры ОЖ. Здесь
+# читаются только те запросы, в которых лежат перечисленные параметры: два-три
+# запроса, около секунды. Смысл именно в паре температур - основной, которой
+# пользуется ЭБУ, и некорректированной: их расхождение и есть улика на врущий датчик.
+QUICK = {
+    0x6A8: ("MP_TEMPERATURE_D_EAU_MOTEUR_d", "MP_TEMP_EAU_NON_CORRIGEE",
+            "MP_REGIME_MOTEUR", "MP_RAPPORT_CYCLIQUE_MOTOVENTILATEUR"),
+}
+
+
+def quick_info(info, names):
+    """Копия каталога блока, суженная до нужных параметров."""
+    keep = [p for p in info["params"] if p["name"] in names]
+    return dict(info, params=keep,
+                requests=sorted({p["req"] for p in keep}))
+
+
 _stop = False
 
 
@@ -106,7 +126,9 @@ def main():
     ap.add_argument("--ecus", default="6A8,6AD,6A8,747,75F,742,76D,75D,730,765,77B,6B5",
                     help="адреса чужих блоков через запятую, hex; пусто - только BSI")
     ap.add_argument("--ecu-every", type=float, default=300.0,
-                    help="как часто снимать чужие блоки, с")
+                    help="как часто снимать чужие блоки полностью, с")
+    ap.add_argument("--quick-every", type=float, default=60.0,
+                    help="как часто делать лёгкий замер (см. QUICK), с; 0 - выключить")
     ap.add_argument("--exit-after-idle", type=float, default=0,
                     help="выйти, если устройства нет столько секунд (0 - ждать вечно). "
                          "Нужно для автозапуска по udev: вынул Lexia - служба сама завершилась")
@@ -148,7 +170,8 @@ def main():
 
     lex = None
     last_ecu = 0.0
-    n_ecu = 0
+    last_quick = 0.0
+    n_ecu = n_quick = 0
     ecu_turn = 0
     last_full = 0.0
     period = 1.0 / args.hot_hz if args.hot_hz > 0 else 0.5
@@ -204,6 +227,35 @@ def main():
         # плюс чтение занимают несколько секунд, и на это время частый опрос
         # оборотов встаёт. Раз в пять минут дырка в потоке BSI заметно реже
         # самого потока, а данные двигателя того стоят.
+        # Лёгкий замер: дешёвый, поэтому часто. Идёт раньше полной вылазки, чтобы
+        # не ждать её очереди.
+        if (args.quick_every and QUICK and not os.path.exists(PAUSE_FLAG)
+                and t0 - last_quick >= args.quick_every):
+            last_quick = t0
+            for tx, rx in extra:
+                names = QUICK.get(tx)
+                if not names:
+                    continue
+                info = quick_info(ECUS[(tx, rx)], names)
+                if not info["params"]:
+                    continue
+                try:
+                    enter(lex, tx, rx)
+                    vals, _, _ = poll_ecu(lex, tx, rx, info)
+                    store.write([(0, f"{info['fam']}:{n}", u, v)
+                                 for n, (v, u) in vals.items()], ts=time.time())
+                    n_quick += len(vals)
+                except Exception as e:
+                    log.warning(f"лёгкий замер {info['ru']} не удался ({type(e).__name__})")
+                break          # только первый блок из списка, у которого есть QUICK
+            try:
+                enter(lex, 0x752, 0x652)
+            except Exception:
+                try: lex.disconnect()
+                except Exception: pass
+                lex = None
+                continue
+
         # Проверка флага ещё и здесь: вылазка занимает до 15 с, и если начать её
         # с уже поставленным флагом, тот, кто просит USB, будет ждать всю вылазку.
         if extra and t0 - last_ecu >= args.ecu_every and not os.path.exists(PAUSE_FLAG):
@@ -261,7 +313,7 @@ def main():
 
         if time.time() - t_report >= 60:
             st = store.stats()
-            log.info(f"собрано: {n_hot} быстрых, {n_full} полных, {n_ecu} из чужих блоков, "
+            log.info(f"собрано: {n_hot} быстрых, {n_full} полных, {n_ecu} полных и {n_quick} лёгких из чужих блоков, "
                      f"в базе {st['total']} значений по {st['params']} параметрам")
             t_report = time.time()
 
