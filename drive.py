@@ -28,7 +28,10 @@ import sys
 import time
 
 from did_catalog import BY_DID
+from ecu import enter
+from ecu_catalog import ECUS
 from lexia_proto import Lexia, parse_multi, plan_batches, read_multi_frame
+from poll_all import poll_ecu
 from storage import Store
 from telemetry import ALIASES, DRIVE_FULL_EVERY, DRIVE_HOT, decode, name_of
 
@@ -96,6 +99,10 @@ def main():
     ap.add_argument("--hot-hz", type=float, default=2.0)
     ap.add_argument("--full-every", type=float, default=DRIVE_FULL_EVERY)
     ap.add_argument("--log", default=os.path.join(HERE, "drive.log"))
+    ap.add_argument("--ecus", default="6A8",
+                    help="адреса чужих блоков через запятую, hex; пусто - только BSI")
+    ap.add_argument("--ecu-every", type=float, default=300.0,
+                    help="как часто снимать чужие блоки, с")
     ap.add_argument("--exit-after-idle", type=float, default=0,
                     help="выйти, если устройства нет столько секунд (0 - ждать вечно). "
                          "Нужно для автозапуска по udev: вынул Lexia - служба сама завершилась")
@@ -121,7 +128,23 @@ def main():
     log.info(f"горячих параметров {len(hot_dids)} с частотой {args.hot_hz} Гц, "
              f"полный снимок {len(all_dids)} раз в {args.full_every:.0f} с")
 
+    extra = []
+    for tok in (args.ecus or "").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        want = int(tok, 16)
+        key = next((k for k in ECUS if k[0] == want), None)
+        if key is None:
+            log.warning(f"блока 0x{want:03X} нет в каталоге - пропускаю")
+        else:
+            extra.append(key)
+            log.info(f"дополнительно снимаю 0x{key[0]:03X} {ECUS[key]['ru']} "
+                     f"({len(ECUS[key]['params'])} параметров) раз в {args.ecu_every:.0f} с")
+
     lex = None
+    last_ecu = 0.0
+    n_ecu = 0
     last_full = 0.0
     period = 1.0 / args.hot_hz if args.hot_hz > 0 else 0.5
     n_hot = n_full = n_reconnect = 0
@@ -172,6 +195,38 @@ def main():
             log.info(f"связь установлена (подключение №{n_reconnect})")
 
         t0 = time.time()
+        # Вылазка в чужой блок. Делается редко и намеренно: переключение канала
+        # плюс чтение занимают несколько секунд, и на это время частый опрос
+        # оборотов встаёт. Раз в пять минут дырка в потоке BSI заметно реже
+        # самого потока, а данные двигателя того стоят.
+        if extra and t0 - last_ecu >= args.ecu_every:
+            last_ecu = t0
+            for tx, rx in extra:
+                info = ECUS[(tx, rx)]
+                try:
+                    enter(lex, tx, rx)
+                    vals, refused, silent = poll_ecu(lex, tx, rx, info)
+                    store.write([(0, f"{info['fam']}:{n}", u, v)
+                                 for n, (v, u) in vals.items()], ts=time.time())
+                    n_ecu += len(vals)
+                    log.info(f"снимок {info['ru']}: {len(vals)} значений "
+                             f"(отказ {refused}, молчание {silent})")
+                except Exception as e:
+                    log.warning(f"снимок {info['ru']} не удался ({type(e).__name__}: {e})")
+                    break
+            # Вернуть канал на BSI обязательно: иначе следующий же быстрый опрос
+            # уйдёт в чужой блок и вернёт пустоту.
+            try:
+                enter(lex, 0x752, 0x652)
+            except Exception as e:
+                log.warning(f"не удалось вернуться на BSI ({type(e).__name__}) - переподключаюсь")
+                try:
+                    lex.disconnect()
+                except Exception:
+                    pass
+                lex = None
+                continue
+
         try:
             if all_dids and t0 - last_full >= args.full_every:
                 vals = poll(lex, all_dids, lengths)
@@ -194,7 +249,7 @@ def main():
 
         if time.time() - t_report >= 60:
             st = store.stats()
-            log.info(f"собрано: {n_hot} быстрых, {n_full} полных, "
+            log.info(f"собрано: {n_hot} быстрых, {n_full} полных, {n_ecu} из чужих блоков, "
                      f"в базе {st['total']} значений по {st['params']} параметрам")
             t_report = time.time()
 
