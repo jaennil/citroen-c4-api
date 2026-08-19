@@ -213,10 +213,44 @@ not carried over: it lies, big-endian is what is on the wire.
 `DEGRAD`/`MESS`/country builds. `VA*` (actuator-test) groups are deliberately excluded -
 this is a read-only path.
 
-**Not yet run against the car.** Everything above was derived from the capture and the DB;
-`ecu.py`, `poll_all.py` and the fixed `extract_payload` have never had hardware in front
-of them. First run should be `./.venv/bin/python ecu.py --all` (identification only), then
-`poll_all.py --tx 6A8`.
+**Confirmed on the car 2026-08-19: the engine ECU is readable.** `21 80` at `0x6A8`
+returns part number `9804436280`, `21 C0 80 01` returns 72 bytes, and the values
+cross-check against the BSI independently - 745 rpm against 751, 14.20 V against 14.26.
+That agreement is what proves a real second ECU is being read rather than an echo.
+
+Getting there took four protocol fixes, none of which was visible without hardware:
+
+* **Wait for readiness by the clock, not by a poll count.** The old limit of 60 polls flew
+  past in ~200 ms because the device answers "busy" instantly. BSI's protocol table allows
+  250 ms and survived; KWP blocks allow 1000 ms and did not. Giving up early left the
+  command unfinished and the next write failed with `USBError [Errno 5]`.
+* **Retry a command the device rejects.** The first command after the configuration table
+  is *always* rejected - the receipt is `15 40 09 02` instead of `06 40 09` - and resending
+  the identical frame succeeds. Measured: reject, then success with `C1`
+  (StartCommunication), then engine reads flow. Without the retry the KWP link never came
+  up and every request returned nothing.
+* **Reassemble multi-packet replies.** A reply arrives in 64-byte packets and a full 64
+  means more follows. One `21 C0 80 01` carries 64 parameters at once, so truncating at one
+  packet dropped every block read: 21 of 189 parameters instead of 55.
+* **Never send a UDS request to a KWP block.** `22 F080` to the engine tears down the link
+  that was just established, after which it is silent to everything. `ecu.is_kwp()` decides
+  from the entry sequence's final payload (`81` = KWP, `10 xx` = UDS) and probes with the
+  matching service only.
+
+Two dead ends recorded so they are not retried. The session handle (byte 8) is **not** the
+problem - it looked decisive because a rejected `handle=00` frame happened to precede an
+accepted `handle=aa` one, but the same frame twice works just as well; the handle
+normalisation was removed from the generator. And `gen_ecu_entry.py` had picked a
+*presence probe* for the engine rather than the real session - a UDS table with `10 03`
+where KWP `81` was needed - because it kept the last sequence per address; it now keeps the
+one followed by the most reads.
+
+`reset_lexia.py` recovers a wedged interface with release + dispose + reset, so a jammed
+Lexia no longer needs the connector pulled.
+
+Still open: 7 of the engine's 14 requests answer, giving 55 of 189 parameters. Some
+decodings are clearly wrong in the same way the BSI's were - oil temperature reads 1225 °C
+- and want the `probe_raw.py` treatment.
 
 ### High beam, revisited
 
