@@ -102,7 +102,7 @@ def main():
     # при условии что между ними есть таблица 00/16 - именно она несёт адрес.
     seqs = []
     cur = None
-    for ts, h in outs:
+    for i, (ts, h) in enumerate(outs):
         b3, b4, b5 = head(h)
         if b4 == 0x00 and b5 == 0xFE:
             cur = {"t": ts, "frames": [h], "addr": None}
@@ -114,16 +114,42 @@ def main():
             cur["addr"] = addr_of(h)
         elif b4 == 0xFF and b5 in (0x01, 0x02):
             if cur["addr"]:
+                cur["end"] = i
                 seqs.append(cur)
             cur = None
         elif len(cur["frames"]) > 12:
             cur = None
 
-    # На каждый адрес оставляем одну последовательность - последнюю (после неё в
-    # дампе шли настоящие чтения, значит она рабочая).
+    # Сколько НАСТОЯЩИХ чтений пошло после каждой последовательности.
+    #
+    # Это и есть признак рабочей. DiagBox много раз обходит всю шину, опрашивая
+    # блоки на наличие, и такая проба выглядит как полноценный вход - те же пять
+    # кадров, тот же адрес, - но за ней ничего не читается. Раньше здесь брaлась
+    # просто последняя последовательность на адрес, и для двигателя выбиралась
+    # именно проба: UDS-таблица с plen=a4 и командой 10 03 вместо KWP-сессии с
+    # plen=78 и StartCommunication 81. Проверено на машине: с пробой блок молчит.
+    ends = sorted(s["end"] for s in seqs)
+    for s in seqs:
+        nxt = next((x for x in ends if x > s["end"]), len(outs))
+        n = 0
+        for _, hh in outs[s["end"] + 1:nxt]:
+            f = head(hh)
+            if f[1] == 0xFF and f[2] == 0x06:
+                n += 1
+        s["reads"] = n
+
+    # Правку байта 8 (дескриптора сессии) здесь пробовали и убрали: казалось, что
+    # финальную команду отвергают из-за несовпадения handle с кадрами настройки.
+    # Настоящая причина другая - устройство отвергает ЛЮБУЮ первую команду после
+    # таблицы, и лечится это повтором в lexia_proto.transact. Кадры остаются
+    # дословными, как в дампе.
+
+    # На каждый адрес оставляем ту, после которой читали больше всего.
     best = {}
     for s in seqs:
-        best[s["addr"]] = s
+        prev = best.get(s["addr"])
+        if prev is None or s["reads"] > prev["reads"]:
+            best[s["addr"]] = s
 
     t0 = recs[0][0]
     print('"""')
@@ -139,7 +165,7 @@ def main():
     print("ENTRY = {")
     for (tx, rx), s in sorted(best.items()):
         name = KNOWN.get(tx, "?")
-        print(f"    # {name}")
+        print(f"    # {name} - чтений после входа в дампе: {s['reads']}")
         print(f"    (0x{tx:03X}, 0x{rx:03X}): [")
         for h in s["frames"]:
             b3, b4, b5 = head(h)
