@@ -293,3 +293,53 @@ tap:
    readout of whether the lamps were actually asked for, and it is how a working MITM will
    be proved.
 3. Only then cut the pair and go in-line with both transceivers.
+
+## Phone control over Bluetooth
+
+Teensy 4.0 has no radio, so the phone link is a separate module on a UART.
+
+| item | qty | note |
+|---|---|---|
+| HM-10 / AT-09 (CC2541) BLE-UART module | 1 | BLE, so it works from both iPhone and Android. 3.3 V logic, wires straight to a Teensy serial port |
+| DPDT signal relay, 5 V coil | 1 | the fail-safe bridge, see below. Two poles because both CAN_H and CAN_L are cut |
+| N-channel MOSFET or ULN2003 + flyback diode | 1 | the Teensy cannot drive a relay coil directly |
+
+HC-05 is cheaper but it is Bluetooth SPP, which iOS does not allow without MFi - Android
+only. Pick HM-10 unless the phone is known to be Android forever.
+
+An ESP32 instead of the HM-10 would allow a web page over its own WiFi AP and no app at
+all, but then the phone has to leave its normal WiFi to press a button. BLE is the better
+fit for this job.
+
+**No app needs writing.** A generic BLE serial terminal (Serial Bluetooth Terminal on
+Android, any BLE terminal on iOS) has assignable macro buttons, so "high beam on" is one
+button sending one character. A real app is optional polish later.
+
+### The failure mode that dictates the design
+
+A MITM cuts the bus, so the stalk reaches the BSI only *through* the Teensy. The stalk
+frame does not carry the high beam alone - it also carries turn indicators, wipers and the
+lighting ring position. If the Teensy hangs or loses power mid-drive, all of that goes with
+it. That is not acceptable in a car.
+
+Hence the DPDT relay wired **normally closed across the cut**: with no power and no healthy
+firmware the two halves of the bus are simply joined and the car behaves as though nothing
+was installed. The Teensy energizes the relay to open the loop only while it is running and
+actually wants to intercept, and a watchdog drops it on any fault. Relay switching on a
+live bus corrupts the frame in flight; CAN retransmits, so that is acceptable.
+
+This is also why forging frames without cutting does not work: the real stalk keeps
+transmitting `0x094` on its own schedule, and two nodes sending the same ID with different
+payloads produce bit errors and drive the error counters toward bus-off. The cut is not
+optional.
+
+### Command protocol, and two rules it must enforce
+
+Plain text over the BLE UART is enough - `R1`/`R0` to force the beam, `S` for status
+(stalk state plus the BSM confirmation from `22D440`).
+
+* **Auto-off on silence.** While the beam is forced, require a heartbeat from the phone;
+  if it stops, revert to pass-through. Otherwise a phone that walked out of range leaves
+  the high beam latched on.
+* **The stalk always wins.** Any change the driver makes with the stalk cancels the
+  override immediately. The physical control must never be the thing that stopped working.
