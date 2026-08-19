@@ -34,6 +34,8 @@ import logging
 import sys
 import time
 
+import usb.core
+
 from ecu import enter
 from ecu_catalog import ECUS
 from lexia_proto import Lexia, parse_multi, plan_batches, read_frame, read_multi_frame
@@ -167,10 +169,16 @@ def main():
             t0 = time.time()
             try:
                 enter(lex, tx, rx, verbose=args.verbose)
+                vals, refused, silent = poll_ecu(lex, tx, rx, info, args.verbose)
+            except usb.core.USBError as e:
+                # Устройство залипло: дальше все запросы будут падать, а их
+                # тысяча. Прекращаем обход, уже собранное записано по блокам.
+                print(f"    интерфейс перестал отвечать ({type(e).__name__}) - "
+                      f"обход прерван, собранное сохранено")
+                break
             except Exception as e:
                 print(f"    войти не удалось: {type(e).__name__}: {e}")
                 continue
-            vals, refused, silent = poll_ecu(lex, tx, rx, info, args.verbose)
             dt = time.time() - t0
             grand += len(vals)
             print(f"    прочитано {len(vals)} за {dt:.1f} с "

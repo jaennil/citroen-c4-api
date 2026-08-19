@@ -99,7 +99,11 @@ def main():
     ap.add_argument("--hot-hz", type=float, default=2.0)
     ap.add_argument("--full-every", type=float, default=DRIVE_FULL_EVERY)
     ap.add_argument("--log", default=os.path.join(HERE, "drive.log"))
-    ap.add_argument("--ecus", default="6A8",
+    # Порядок = приоритет. Двигатель первым и вдвое чаще: он даёт больше всего
+    # меняющихся на ходу величин. Дальше ABS со скоростями колёс, блок реле
+    # моторного отсека, щиток, подрулевой, климат, парктроник; конфигурационные
+    # блоки вроде подушек и дверей в конце - у них почти всё константы.
+    ap.add_argument("--ecus", default="6A8,6AD,6A8,747,75F,742,76D,75D,730,765,77B,6B5",
                     help="адреса чужих блоков через запятую, hex; пусто - только BSI")
     ap.add_argument("--ecu-every", type=float, default=300.0,
                     help="как часто снимать чужие блоки, с")
@@ -145,6 +149,7 @@ def main():
     lex = None
     last_ecu = 0.0
     n_ecu = 0
+    ecu_turn = 0
     last_full = 0.0
     period = 1.0 / args.hot_hz if args.hot_hz > 0 else 0.5
     n_hot = n_full = n_reconnect = 0
@@ -201,19 +206,24 @@ def main():
         # самого потока, а данные двигателя того стоят.
         if extra and t0 - last_ecu >= args.ecu_every:
             last_ecu = t0
-            for tx, rx in extra:
-                info = ECUS[(tx, rx)]
-                try:
-                    enter(lex, tx, rx)
-                    vals, refused, silent = poll_ecu(lex, tx, rx, info)
-                    store.write([(0, f"{info['fam']}:{n}", u, v)
-                                 for n, (v, u) in vals.items()], ts=time.time())
-                    n_ecu += len(vals)
-                    log.info(f"снимок {info['ru']}: {len(vals)} значений "
-                             f"(отказ {refused}, молчание {silent})")
-                except Exception as e:
-                    log.warning(f"снимок {info['ru']} не удался ({type(e).__name__}: {e})")
-                    break
+            # По ОДНОМУ блоку за вылазку, по кругу. Обойти все тринадцать за раз -
+            # это минуты, в которые не идёт ничего другого. Частоту отдельного
+            # блока можно поднять, повторив его адрес в --ecus: список задаёт и
+            # порядок, и вес, так что "6A8,6AD,6A8,747" навещает двигатель вдвое
+            # чаще остальных.
+            tx, rx = extra[ecu_turn % len(extra)]
+            ecu_turn += 1
+            info = ECUS[(tx, rx)]
+            try:
+                enter(lex, tx, rx)
+                vals, refused, silent = poll_ecu(lex, tx, rx, info)
+                store.write([(0, f"{info['fam']}:{n}", u, v)
+                             for n, (v, u) in vals.items()], ts=time.time())
+                n_ecu += len(vals)
+                log.info(f"снимок {info['ru']}: {len(vals)} значений "
+                         f"(отказ {refused}, молчание {silent})")
+            except Exception as e:
+                log.warning(f"снимок {info['ru']} не удался ({type(e).__name__}: {e})")
             # Вернуть канал на BSI обязательно: иначе следующий же быстрый опрос
             # уйдёт в чужой блок и вернёт пустоту.
             try:

@@ -25,38 +25,27 @@ cleanup() { rm -f "$FLAG"; }
 trap cleanup EXIT INT TERM
 touch "$FLAG"
 
-# Ждём, пока устройство станет реально нашим. Проверка боем: заявка на интерфейс
-# либо проходит, либо нет - опрашивать журнал службы ненадёжно.
-if ! "$HERE/.venv/bin/python" - "$WAIT" <<'PY'
-import sys, time
-import usb.core, usb.util
-sys.path.insert(0, ".")
-from lexia_proto import PRODUCT_ID, VENDOR_ID
+# Если служба не активна, ждать нечего: устройство ничьё, надо только убедиться,
+# что оно на шине. Пробную заявку на интерфейс тут делать ВРЕДНО - захват и
+# немедленное освобождение подряд ломает устройство, и следующая же команда
+# рукопожатия падает с I/O error. Проверено: сразу после переподключения обёртка с
+# пробным захватом валила device_boot, без него всё работает.
+if systemctl is-active --quiet c4-telemetry; then
+  echo "служба активна, жду пока отпустит USB..."
+  ok=0
+  for _ in $(seq 1 "$WAIT"); do
+    if ! systemctl is-active --quiet c4-telemetry; then ok=1; break; fi
+    # drive.py проверяет флаг раз в 3 с; ждём, пока он отпустит захват
+    if journalctl -u c4-telemetry --since "-$((WAIT+5)) seconds" 2>/dev/null \
+         | grep -q "освобождаю USB"; then ok=1; break; fi
+    sleep 1
+  done
+  [ "$ok" = 1 ] || { echo "сбор так и не отпустил USB за ${WAIT} с"; exit 1; }
+  sleep 2
+fi
 
-until = time.time() + float(sys.argv[1])
-while time.time() < until:
-    dev = usb.core.find(idVendor=VENDOR_ID, idProduct=PRODUCT_ID)
-    if dev is not None:
-        try:
-            if dev.is_kernel_driver_active(0):
-                dev.detach_kernel_driver(0)
-        except Exception:
-            pass
-        try:
-            usb.util.claim_interface(dev, 0)
-            usb.util.release_interface(dev, 0)
-            usb.util.dispose_resources(dev)
-            print("устройство свободно")
-            sys.exit(0)
-        except Exception:
-            usb.util.dispose_resources(dev)
-    time.sleep(1)
-print("устройство так и не освободилось")
-sys.exit(1)
-PY
-then
-  echo "не дождался освобождения за ${WAIT} с. Сбор ещё держит USB или устройства нет на шине."
-  echo "Проверь: lsusb -d 103a:f008"
+if ! lsusb -d 103a:f008 >/dev/null 2>&1; then
+  echo "устройства нет на шине. Переткни USB-конец, при неудаче сними питание с OBD."
   exit 1
 fi
 
