@@ -195,6 +195,23 @@ def extract_payload(resp: bytes):
     return None
 
 
+def rejected(ack: bytes) -> bool:
+    """Отказ устройства вместо квитанции: 15 40 09 xx против 06 40 09."""
+    return bool(ack) and ack[0] == 0x15
+
+
+def empty_result(resp: bytes) -> bool:
+    """Пустая квитанция: эхо команды есть, а области результата нет.
+
+    У осмысленного ответа в байтах 14..19 лежит эхо вида <b4> <b5> <len> 00
+    <handle>, у пустой квитанции там нули. Так отличается "принял, но ещё не
+    сделал" от настоящего результата.
+    """
+    if not resp or len(resp) < 20:
+        return True
+    return not any(resp[14:20])
+
+
 def describe(payload: bytes) -> str:
     """Человекочитаемая расшифровка ответа UDS."""
     if not payload:
@@ -248,18 +265,48 @@ class Lexia:
         except usb.core.USBError:
             return b""
 
-    def transact(self, cmd: bytes, poll_limit: int = 60):
+    def transact(self, cmd: bytes, deadline: float = 3.0, dwell: float = 0.0,
+                 retries: int = 2):
         """Полный цикл: команда, ожидание готовности, забор ответа, ack.
 
-        Возвращает (payload, raw). payload - разобранный ответ UDS.
-        """
-        self._w(cmd)
-        time.sleep(SETTLE)
-        self._r(timeout=500)  # 064009
+        Возвращает (payload, raw). payload - разобранный ответ ЭБУ.
 
+        Два измеренных на машине правила, без которых работала только BSI.
+
+        Готовности ждём ПО ЧАСАМ, а не по числу опросов. Раньше стоял предел в 60
+        итераций: устройство отвечает "занят" мгновенно, поэтому 60 опросов
+        пролетали за ~200 мс. У BSI тайминг в таблице протокола 250 мс и этого
+        хватало, а у KWP-блоков вроде двигателя там 1000 мс - мы сдавались до
+        ответа, оставляли команду недоделанной, и следующая запись валилась
+        USBError с Errno 5.
+
+        ПОВТОР ПРИ ОТКАЗЕ. Первую команду после таблицы настройки устройство
+        отвергает всегда - отвечает не 06 40 09, а 15 40 09 02, - и повтор той же
+        команды проходит. Проверено: три отправки подряд дали отказ, потом успех с
+        ответом C1 (StartCommunication), потом чтения двигателя пошли. Без повтора
+        KWP-связь не поднималась и блок молчал на всё; выглядело это как будто
+        переключение блоков не работает, хотя канал переключался исправно.
+        """
+        payload, raw = None, b""
+        for _ in range(retries + 1):
+            self._w(cmd)
+            time.sleep(SETTLE)
+            ack = self._r(timeout=500)   # 06 40 09 - принято, 15 40 09 xx - отказ
+            if dwell:
+                time.sleep(dwell)
+            payload, raw = self._collect(deadline)
+            if not rejected(ack):
+                return payload, raw
+            # Отказ. Только что забранный результат - это зависший ответ прошлой
+            # команды, а свою надо послать заново.
+        return payload, raw
+
+    def _collect(self, deadline: float = 3.0):
+        """Дождаться готовности, забрать результат, подтвердить."""
         poll = bytes.fromhex(POLL)
         done = bytes.fromhex(POLL_DONE)
-        for _ in range(poll_limit):
+        until = time.time() + deadline
+        while time.time() < until:
             self._w(poll)
             time.sleep(POLL_SETTLE)
             if self._r(timeout=500) == done:
@@ -268,11 +315,21 @@ class Lexia:
         self._w(bytes.fromhex(FETCH))
         time.sleep(SETTLE)
         raw = self._r()
+        # Длинный ответ приходит несколькими пакетами по 64 байта: ровно 64 значит
+        # "продолжение следует". Без сборки терялись все блочные чтения KWP - у
+        # двигателя один запрос 21 C0 80 01 отдаёт разом 64 параметра и в один
+        # пакет не влезает, поэтому из 189 параметров читалось только 21.
+        while raw and len(raw) % 64 == 0:
+            more = self._r(timeout=400)
+            if not more:
+                break
+            raw += more
         self._w(bytes.fromhex(ACK))
         time.sleep(POLL_SETTLE)
         return extract_payload(raw), raw
 
-    def transact_frames(self, frames, poll_limit: int = 60):
+    def transact_frames(self, frames, deadline: float = 5.0, dwell: float = 0.15,
+                        refetch: bool = True):
         """Команда из нескольких USB-кадров (фрагментированная).
 
         Таблица настройки протокола не влезает в один кадр: DiagBox пишет её
@@ -280,11 +337,20 @@ class Lexia:
         последнего 0x40 (последний). Опрос готовности делается ОДИН раз, после
         последнего фрагмента: если опрашивать после каждого, устройство отвечает
         отказом на незавершённую команду.
+
+        На такую команду устройство отвечает ДВАЖДЫ: сперва пустой квитанцией
+        (область результата в нулях, статус 0), потом настоящим результатом. Если
+        забрать только первую, вся дальнейшая переписка съезжает на шаг - ответ
+        таблицы приезжает уже на следующей команде, и блок выглядит молчащим.
+        Замерено на машине: именно из-за этого не открывался двигатель.
         """
         for f in frames[:-1]:
             self._w(f)
             time.sleep(POLL_SETTLE)
-        return self.transact(frames[-1], poll_limit=poll_limit)
+        payload, raw = self.transact(frames[-1], deadline=deadline, dwell=dwell)
+        if refetch and empty_result(raw):
+            payload, raw = self._collect(deadline)
+        return payload, raw
 
     def init_session(self):
         return self.transact(bytes.fromhex(INIT_FRAME))
