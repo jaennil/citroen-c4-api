@@ -307,9 +307,27 @@ Teensy 4.0 has no radio, so the phone link is a separate module on a UART.
 HC-05 is cheaper but it is Bluetooth SPP, which iOS does not allow without MFi - Android
 only. Pick HM-10 unless the phone is known to be Android forever.
 
-An ESP32 instead of the HM-10 would allow a web page over its own WiFi AP and no app at
-all, but then the phone has to leave its normal WiFi to press a button. BLE is the better
-fit for this job.
+**An ESP32 is the better pick for this role than the HM-10**, and it does BLE too - the
+earlier note here framed ESP32 as a WiFi-only option, which was too narrow. One part then
+covers both phone platforms: Bluetooth Classic SPP for Android (same zero-development
+serial-terminal path as an HC-05) and BLE for iOS, plus a WiFi web UI as a bonus for
+config and log pulling at home. Cost is comparable to an HM-10.
+
+Take the **original ESP32-WROOM-32**, not an ESP32-C3 or -S3: the newer parts have BLE only
+and no Bluetooth Classic, so the SPP fallback disappears.
+
+**The ESP32 cannot replace the Teensy.** It has a single TWAI controller, and a MITM needs
+two independent CAN interfaces - one facing the stalk, one facing the BSI. Bolting on an
+MCP2515 for the second bus is possible but a step backwards: SPI latency in a bridge that
+must be transparent, and the common modules are 5 V parts. Teensy 4.0 has two native
+FlexCAN controllers on top-side pins; keep CAN there and let the ESP32 be the radio,
+joined by a UART.
+
+Two wiring notes for that split. Both are 3.3 V parts, so the UART connects directly with
+no level shifting. And on the Teensy 4.0 **CAN2 and Serial1 share pins 0 and 1** - check
+the pinout card and put the ESP32 on Serial2 (pins 7/8) so it does not collide with the
+second CAN interface. Power the ESP32 from the 5 V buck through its own onboard regulator
+rather than from the Teensy 3.3 V pin, which has little headroom if WiFi ever comes up.
 
 **No app needs writing.** A generic BLE serial terminal (Serial Bluetooth Terminal on
 Android, any BLE terminal on iOS) has assignable macro buttons, so "high beam on" is one
