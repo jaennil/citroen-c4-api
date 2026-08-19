@@ -343,11 +343,30 @@ frame does not carry the high beam alone - it also carries turn indicators, wipe
 lighting ring position. If the Teensy hangs or loses power mid-drive, all of that goes with
 it. That is not acceptable in a car.
 
-Hence the DPDT relay wired **normally closed across the cut**: with no power and no healthy
+Hence the relay wired **normally closed across the cut**: with no power and no healthy
 firmware the two halves of the bus are simply joined and the car behaves as though nothing
-was installed. The Teensy energizes the relay to open the loop only while it is running and
-actually wants to intercept, and a watchdog drops it on any fault. Relay switching on a
-live bus corrupts the frame in flight; CAN retransmits, so that is acceptable.
+was installed. Relay switching on a live bus corrupts the frame in flight; CAN retransmits,
+so that is acceptable.
+
+**Better still, stay joined by default and only open the loop while actually forcing the
+beam.** Both transceivers sit on the joined bus and hear everything, so the Teensy can watch
+`0x094` passively without cutting anything; it opens the relay, bridges actively and
+rewrites the bit only for as long as the override is on. That keeps the car electrically
+stock almost all the time, drops two relay coils worth of continuous current, and saves
+contact wear. The firmware rule that comes with it: **never transmit while the relay is
+closed** - both transceivers are then on the same segment and the Teensy would collide with
+itself. Losing a couple of stalk frames at the moment of switchover is harmless, they are
+periodic.
+
+Wiring, per line: stalk side to COM, BSI side to **NC**. Two channels, one for CAN_H and one
+for CAN_L, driven from a single GPIO so they always move together. Set the module's
+HIGH/LOW jumper to high-level trigger, so a low or undriven input leaves the relay
+de-energized, and add a **10k pulldown** on each control input so "undriven" is definitely
+low while the Teensy boots or hangs. Bench-test it before it goes in the car: power the
+module, leave the input alone, and check continuity across the joined pair.
+
+Current budget for the 5 V buck: Teensy ~100 mA, ESP32 up to ~250 mA on BLE, and ~150 mA
+more while both relay coils are energized. A 2-3 A module has ample margin.
 
 This is also why forging frames without cutting does not work: the real stalk keeps
 transmitting `0x094` on its own schedule, and two nodes sending the same ID with different
