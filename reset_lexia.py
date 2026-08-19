@@ -68,6 +68,20 @@ def main():
                     help="сразу сброс шины (переподключает устройство)")
     args = ap.parse_args()
 
+    # Не лезть к устройству, пока его может держать служба сбора: именно эта драка
+    # за захват дважды сбрасывала Lexia с шины насовсем. Правильный путь -
+    # with-lexia.sh, он ставит флаг и ждёт фактического освобождения.
+    import os
+    import subprocess
+    flag = os.path.expanduser("~/.config/c4-can/pause")
+    if not os.path.exists(flag):
+        active = subprocess.run(["systemctl", "is-active", "--quiet", "c4-telemetry"],
+                                check=False).returncode == 0
+        if active:
+            print("служба c4-telemetry активна, а флага паузы нет - она держит USB.")
+            print("запускай через ./with-lexia.sh, иначе драка за захват уронит устройство.")
+            return 2
+
     dev = find()
     if dev is None:
         print("устройства нет в USB. Если кабель воткнут и зажигание включено -")
