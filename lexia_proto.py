@@ -195,6 +195,24 @@ def extract_payload(resp: bytes):
     return None
 
 
+def echo_of(cmd: bytes):
+    """Какое эхо обязан вернуть ответ на эту команду: пара байт b4/b5.
+
+    В ответе устройства байты 4 и 5 повторяют b4/b5 команды. Это единственный
+    способ убедиться, что ответ относится именно к нашему запросу.
+    """
+    if len(cmd) < 6 or not (cmd[3] & 0x80):
+        return None
+    return cmd[4], cmd[5]
+
+
+def echo_ok(expect, resp: bytes) -> bool:
+    """Ответ относится к нашей команде? None в expect - проверять нечем."""
+    if expect is None or not resp or len(resp) < 6:
+        return True
+    return (resp[4], resp[5]) == tuple(expect)
+
+
 def rejected(ack: bytes) -> bool:
     """Отказ устройства вместо квитанции: 15 40 09 xx против 06 40 09."""
     return bool(ack) and ack[0] == 0x15
@@ -266,7 +284,7 @@ class Lexia:
             return b""
 
     def transact(self, cmd: bytes, deadline: float = 3.0, dwell: float = 0.0,
-                 retries: int = 2):
+                 retries: int = 2, expect=None):
         """Полный цикл: команда, ожидание готовности, забор ответа, ack.
 
         Возвращает (payload, raw). payload - разобранный ответ ЭБУ.
@@ -287,18 +305,30 @@ class Lexia:
         KWP-связь не поднималась и блок молчал на всё; выглядело это как будто
         переключение блоков не работает, хотя канал переключался исправно.
         """
+        if expect is None:
+            expect = echo_of(cmd)
         payload, raw = None, b""
-        for _ in range(retries + 1):
+        for attempt in range(retries + 1):
             self._w(cmd)
             time.sleep(SETTLE)
             ack = self._r(timeout=500)   # 06 40 09 - принято, 15 40 09 xx - отказ
             if dwell:
                 time.sleep(dwell)
             payload, raw = self._collect(deadline)
-            if not rejected(ack):
-                return payload, raw
-            # Отказ. Только что забранный результат - это зависший ответ прошлой
-            # команды, а свою надо послать заново.
+            if rejected(ack):
+                # Отказ. Только что забранный результат - это зависший ответ
+                # прошлой команды, а свою надо послать заново.
+                continue
+            if not echo_ok(expect, raw):
+                # Ответ не от нашей команды: переписка разъехалась. Раньше это
+                # молча копилось - лишние байты оставались в трубе, сдвиг рос, и
+                # через несколько минут работы устройство отвечало USBError [Errno 5]
+                # и залипало до переподключения разъёма. Вычищаем трубу и
+                # повторяем, вместо того чтобы жить со сдвигом.
+                log.debug("ответ не от нашей команды, пересинхронизация")
+                self.drain(timeout=60)
+                continue
+            return payload, raw
         return payload, raw
 
     def _collect(self, deadline: float = 3.0):
@@ -347,7 +377,10 @@ class Lexia:
         for f in frames[:-1]:
             self._w(f)
             time.sleep(POLL_SETTLE)
-        payload, raw = self.transact(frames[-1], deadline=deadline, dwell=dwell)
+        # Эхо ждём от ПЕРВОГО кадра: у продолжений заголовок укороченный и b4/b5 в
+        # них нет вовсе.
+        payload, raw = self.transact(frames[-1], deadline=deadline, dwell=dwell,
+                                     expect=echo_of(frames[0]))
         if refetch and empty_result(raw):
             payload, raw = self._collect(deadline)
         return payload, raw
