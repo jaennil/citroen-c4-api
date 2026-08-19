@@ -248,8 +248,10 @@ Teensy 4.0 is ordered. What else is needed:
 | item | qty | why |
 |---|---|---|
 | SN65HVD230 CAN transceiver breakout | **2** | one per side of the cut. A MITM is not a tap - the bus is cut and the Teensy sits in the middle, so it needs a transceiver facing the stalk and another facing the BSI. Buying one is the classic mistake. |
-| 12 V -> 5 V step-down (MP1584 or similar) | 1 | powers the Teensy from the car |
-| fuse 2-3 A + TVS or zener on the 12 V input | 1 | automotive 12 V has load-dump spikes |
+| MP1584EN step-down module | 1-2 | powers everything from the car. Output is **adjustable by trimmer** - set it to 5.0 V with a meter BEFORE anything is connected downstream; these ship at whatever the pot happens to be |
+| fuse 2-3 A with holder | 1 | |
+| TVS diode **SMBJ16A** (or P6SMB16A) on the 12 V input | 1 | MP1584 absolute max input is 28 V, and an automotive load dump goes past that, so this is not optional. SMBJ16A stands off 16 V - above the ~14.5 V charging rail - and clamps around 26 V, i.e. below the module ceiling |
+| Schottky diode in series on the 12 V feed | 1 | reverse-polarity protection, costs pennies and forgives one wiring mistake |
 | micro-USB cable | 1 | programming the Teensy 4.0 |
 | inline connector pair / spare pigtail, crimps, heat-shrink | 1 | so the cut is reversible and the car can be put back |
 | perfboard, pin headers, small enclosure | - | not strictly needed but the thing lives in a car |
