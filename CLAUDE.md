@@ -415,6 +415,22 @@ closed** - both transceivers are then on the same segment and the Teensy would c
 itself. Losing a couple of stalk frames at the moment of switchover is harmless, they are
 periodic.
 
+**The relay module's coil voltage is not a free choice - it decides whether the module
+can be driven at all.** A 12 V module was ordered by mistake; the trap is on the input
+side, not the coil. On these opto-isolated boards the input is referenced to the board's
+own supply: in low-level-trigger mode the idle voltage on IN sits near the supply rail
+(~11 V on a 12 V board), which destroys a Teensy pin on contact - Teensy 4.0 is not even
+5 V tolerant; in high-level-trigger mode the LED series resistor is sized for 12 V, so
+3.3 V drives only ~2 mA where 5-10 mA is needed, and the relay becomes unreliable.
+
+A 12 V module is still usable **if** it carries the **JD-VCC jumper**: logic supply from
+5 V, coil supply from 12 V separately. That is actually better than the original plan -
+the coils stop loading the buck and free ~150 mA. Without that jumper, use a 5 V module.
+
+Rule for any unfamiliar module: power it, leave IN unconnected, and **measure the idle
+voltage on IN before wiring it to a Teensy pin.** Above 3.3 V means it must never touch
+the Teensy directly.
+
 Wiring, per line: stalk side to COM, BSI side to **NC**. Two channels, one for CAN_H and one
 for CAN_L, driven from a single GPIO so they always move together. Set the module's
 HIGH/LOW jumper to high-level trigger, so a low or undriven input leaves the relay
