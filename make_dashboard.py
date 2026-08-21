@@ -221,6 +221,34 @@ THRESHOLD_LINES = {
 }
 
 
+
+# Границы берутся в два слоя: сперва выведенные вручную выше, потом norms.py.
+# Порядок именно такой - в ручных учтены расчёты по этой машине (объём бака,
+# интервал ТО, неверный масштаб напряжения покоя), и автоматика их не должна
+# затирать. norms.py добирает остальные физические величины.
+import norms
+
+
+def title_for(name, fallback):
+    return norms.title(name) or fallback
+
+
+def steps_for(name):
+    return THRESHOLDS.get(name) or norms.steps(name)
+
+
+def lines_for(name):
+    return THRESHOLD_LINES.get(name) or norms.lines(name)
+
+
+def axis_for(name):
+    return AXIS_RANGE.get(name) or norms.axis(name)
+
+
+def help_for(name):
+    return THRESHOLD_HELP.get(name) or norms.help_text(name)
+
+
 def target_with_lines(name, lines):
     """Запрос параметра плюс горизонтальные линии-границы как отдельные серии.
 
@@ -262,7 +290,7 @@ def line_overrides(lines):
 
 def with_thresholds(p, name):
     """Дорисовать пороговые линии, если для параметра они заданы."""
-    steps = THRESHOLDS.get(name)
+    steps = steps_for(name)
     if not steps:
         return p
     p["fieldConfig"]["defaults"]["thresholds"] = {
@@ -272,15 +300,15 @@ def with_thresholds(p, name):
     # dashed+area: пунктирная линия плюс подкраска зоны за порогом
     # только заливка зон: пунктирные линии теперь рисуются подписанными сериями,
     # иначе на тех же значениях получилось бы по две линии
-    style = "area" if THRESHOLD_LINES.get(name) else "dashed+area"
+    style = "area" if lines_for(name) else "dashed+area"
     p["fieldConfig"]["defaults"].setdefault("custom", {})["thresholdsStyle"] = {
         "mode": style
     }
-    rng = AXIS_RANGE.get(name)
+    rng = axis_for(name)
     if rng:
         p["fieldConfig"]["defaults"]["min"] = rng[0]
         p["fieldConfig"]["defaults"]["max"] = rng[1]
-    help_text = THRESHOLD_HELP.get(name)
+    help_text = help_for(name)
     if help_text:
         p["description"] = help_text
     return p
@@ -294,7 +322,7 @@ def mini(pid, title, name, gx, gy, unit="", gw=12, gh=7):
     собран из обычных timeseries: текущее значение видно в легенде (Last),
     а по наведению доступно значение в любой момент времени.
     """
-    lines = THRESHOLD_LINES.get(name)
+    lines = lines_for(name)
     tgt = target_with_lines(name, lines) if lines else target([name], "A")
     p = panel(pid, title, gx, gy, gw, gh, [tgt], unit)
     # multi: чтобы при наведении были видны и значение, и все границы сразу
@@ -663,10 +691,17 @@ def build():
 
         # Сначала разбиваем по единицам измерения и порядку величины: иначе в одну
         # панель попадают пробег в 195000 км и "дней до ТО", и второе не видно.
+        # У кого есть границы нормы - тому отдельный график. В общей панели на
+        # четыре параметра зона бессмысленна: заливка и пороговые линии в
+        # Grafana относятся к панели целиком, а не к ряду, и на четырёх рядах
+        # покрасили бы заодно и соседей с другими нормами.
+        zoned = [it for it in items if steps_for(it[0])]
+        rest = [it for it in items if not steps_for(it[0])]
+
         by_unit = {}
-        for it in items:
+        for it in rest:
             by_unit.setdefault((it[1], magnitude(it[0])), []).append(it)
-        chunks = []
+        chunks = [[z] for z in zoned]
         for key in sorted(by_unit, key=lambda k: (k[0], k[1])):
             grp = by_unit[key]
             chunks += [grp[j:j + 4] for j in range(0, len(grp), 4)]
@@ -677,11 +712,15 @@ def build():
             unit = UNIT_MAP.get(chunk[0][1], "")
             # заголовок панели - из ручных имён; DID обязателен, иначе ru_label
             # не найдёт запись и свалится в грубый автоперевод
-            pan = panel(pid, " · ".join(ru_label(d, n)[:26] for n, _, d in chunk),
-                        (i % 2) * 12, y + (i // 2) * 8, 12, 8,
-                        [target([n for n, _, _ in chunk])], unit)
-            if len(chunk) == 1:
-                pan = with_thresholds(pan, chunk[0][0])
+            if len(chunk) == 1 and steps_for(chunk[0][0]):
+                # mini: запрос вместе с подписанными линиями-границами
+                n, _, d = chunk[0]
+                pan = mini(pid, title_for(n, ru_label(d, n)[:40]), n,
+                           (i % 2) * 12, y + (i // 2) * 8, unit, gw=12, gh=8)
+            else:
+                pan = panel(pid, " · ".join(ru_label(d, n)[:26] for n, _, d in chunk),
+                            (i % 2) * 12, y + (i // 2) * 8, 12, 8,
+                            [target([n for n, _, _ in chunk])], unit)
             panels.append(pan)
             pid += 1
         y += 8 * ((len(chunks) + 1) // 2)
@@ -699,18 +738,26 @@ def build():
 
         # Графики только тем, что меняется. Группируем по единице измерения и по
         # порядку величины - иначе милливольты лямбды и обороты попадут на одну ось.
+        zoned = [(n, u) for n, u in varying if steps_for(n)]
+        rest = [(n, u) for n, u in varying if not steps_for(n)]
+
         by_unit = {}
-        for n, u in varying:
+        for n, u in rest:
             by_unit.setdefault((u, magnitude(n)), []).append((n, u))
-        chunks = []
+        chunks = [[z] for z in zoned]
         for key in sorted(by_unit, key=lambda k: (str(k[0]), k[1])):
             grp = by_unit[key]
             chunks += [grp[j:j + 4] for j in range(0, len(grp), 4)]
         for i, chunk in enumerate(chunks):
             unit = UNIT_MAP.get(chunk[0][1], "")
-            pan = panel(pid, " · ".join(short_label(n)[:26] for n, _ in chunk),
-                        (i % 2) * 12, y + (i // 2) * 8, 12, 8,
-                        [target([n for n, _ in chunk])], unit)
+            if len(chunk) == 1 and steps_for(chunk[0][0]):
+                pan = mini(pid, title_for(chunk[0][0], short_label(chunk[0][0])[:40]),
+                           chunk[0][0],
+                           (i % 2) * 12, y + (i // 2) * 8, unit, gw=12, gh=8)
+            else:
+                pan = panel(pid, " · ".join(short_label(n)[:26] for n, _ in chunk),
+                            (i % 2) * 12, y + (i // 2) * 8, 12, 8,
+                            [target([n for n, _ in chunk])], unit)
             panels.append(pan)
             pid += 1
         y += 8 * ((len(chunks) + 1) // 2)
