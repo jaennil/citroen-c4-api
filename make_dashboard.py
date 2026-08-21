@@ -35,7 +35,7 @@ DS = {"type": "postgres", "uid": "citroen-postgres"}
 
 # coalesce: если ярлык почему-то не заполнен, показываем мнемонику
 SERIES_SQL = (
-    'SELECT r.ts AS "time", coalesce(p.label, p.name) AS metric, r.value\n'
+    'SELECT r.ts AS "time", {metric} AS metric, r.value\n'
     "FROM reading r JOIN param p ON p.id = r.param_id\n"
     "WHERE p.name IN ({names}) AND $__timeFilter(r.ts)\n"
     "ORDER BY 1"
@@ -46,13 +46,56 @@ def sql_in(names):
     return ", ".join("'" + n.replace("'", "''") + "'" for n in names)
 
 
+# Имя -> DID для параметров BSI: ручная таблица имён ru_labels.NAMES ключуется
+# по DID, а в запрос приходит только имя.
+DID_OF = {e["name"]: e["did"] for e in CATALOG}
+
+
+def human_name(name: str) -> str:
+    """Русское имя параметра по одному его имени, без DID на входе."""
+    if name.startswith("DTC:"):
+        # у кода неисправности осмысленное имя - только описание из базы DiagBox,
+        # оно лежит в label и собрать его из мнемоники нельзя
+        return ""
+    d = DID_OF.get(name)
+    from ru_labels import label as ru_label
+    return ru_label(d, name) if d else short_label(name)
+
+
+def metric_sql(names):
+    """Имя серии - подставляется в запрос, а не берётся из поля label в базе.
+
+    Поле label заполняется один раз при первой встрече параметра и потом не
+    пересматривается, поэтому в архиве кластера лежат старые автопереводы вида
+    "V46 32:mp facteur correction richesse amont" - именно они и попадали в
+    легенду. Переписать их можно только с доступом к Postgres (relabel.py), а
+    дашборд должен читаться и до этого. Поэтому имя вычисляется здесь и уезжает
+    в запрос: тогда легенда верна независимо от состояния базы.
+
+    ELSE оставлен на случай, если в панель попадёт параметр, которого не было
+    при генерации.
+    """
+    parts = []
+    for n in names:
+        lab = norms.title(n) or human_name(n)
+        if not lab:
+            continue      # коды неисправностей: описание есть только в базе
+        parts.append("WHEN '%s' THEN '%s'" % (n.replace("'", "''"),
+                                              lab.replace("'", "''")))
+    if not parts:
+        return "coalesce(p.label, p.name)"
+    return "CASE p.name\n       " + "\n       ".join(parts) + \
+           "\n       ELSE coalesce(p.label, p.name) END"
+
+
 def target(names, ref="A"):
     return {
         "refId": ref,
         "datasource": DS,
         "format": "time_series",
         "rawQuery": True,
-        "rawSql": SERIES_SQL.format(names=sql_in(names)),
+        "rawSql": SERIES_SQL.format(names=sql_in(names),
+                                    metric=metric_sql(names)),
     }
 
 
@@ -256,7 +299,8 @@ def target_with_lines(name, lines):
     ровной линией через весь график и подписывается в тултипе.
     """
     # ORDER BY убираем: внутри UNION ALL он недопустим, сортировка идёт в конце
-    base = SERIES_SQL.format(names=sql_in([name])).replace("\nORDER BY 1", "")
+    base = SERIES_SQL.format(names=sql_in([name]),
+                             metric=metric_sql([name])).replace("\nORDER BY 1", "")
     parts = [base]
     for value, title, _ in lines:
         label = title.replace("'", "''")
@@ -341,7 +385,7 @@ def mini(pid, title, name, gx, gy, unit="", gw=12, gh=7):
 
 
 LATEST_SQL = (
-    'SELECT coalesce(p.label, p.name) AS "Параметр", p.unit AS "Ед.",\n'
+    'SELECT {metric} AS "Параметр", p.unit AS "Ед.",\n'
     '       l.value AS "Значение", l.ts AS "Обновлено"\n'
     "FROM param p\n"
     "JOIN LATERAL (SELECT value, ts FROM reading WHERE param_id = p.id\n"
@@ -361,7 +405,8 @@ def latest_table(pid, title, names, gh=16, gy=0):
         "gridPos": {"h": gh, "w": 24, "x": 0, "y": gy},
         "targets": [{"refId": "A", "datasource": DS, "format": "table",
                      "rawQuery": True,
-                     "rawSql": LATEST_SQL.format(names=sql_in(names))}],
+                     "rawSql": LATEST_SQL.format(names=sql_in(names),
+                                                metric=metric_sql(names))}],
         "fieldConfig": {"defaults": {"custom": {"align": "auto"}}, "overrides": []},
         "options": {"showHeader": True, "footer": {"show": False},
                     "sortBy": [{"displayName": "Параметр", "desc": False}]},
@@ -456,6 +501,18 @@ MAXES = {n: v[2] for n, v in STATS.items() if v[2]}
 FILTER_EMPTY = sum(1 for v in COUNTS.values() if v) > 50
 
 
+# Приставки имён, которые не бывают графиком: номера железа и ПО, даты
+# изготовления, индексы телекодирования. У них по одному замеру, поэтому общее
+# правило is_constant (нужно 20 замеров) их не ловило, и номер железа рисовался
+# графиком со значением 652906553984 на всю панель.
+ID_PREFIX = ("ID_", "CFG", "CONFIG_", "TYPE_")
+
+
+def is_identifier(name):
+    m = name.split(":", 1)[-1]
+    return m.startswith(ID_PREFIX) or m == "APC"
+
+
 def is_constant(name):
     """Значение не менялось ни разу за всю историю.
 
@@ -463,6 +520,8 @@ def is_constant(name):
     Место ему в таблице текущих значений. Порог по числу замеров нужен, чтобы
     не записать в константы параметр, который просто измерен два раза.
     """
+    if is_identifier(name):
+        return True
     n, d, _ = STATS.get(name, (0, 0, 0.0))
     return n >= 20 and d <= 1
 
@@ -559,6 +618,22 @@ def ecu_sections():
             continue
         groups.setdefault(name.split(":", 1)[0], []).append((name, unit_of.get(name, "")))
     return groups, fam_ru
+
+
+def join_titles(titles) -> str:
+    """Заголовок панели из нескольких параметров.
+
+    Обрезка по 26 знаков съедала как раз то, чем параметры различались: четыре
+    панели времени впрыска назывались "Temps injection cylindre 0" - номер
+    цилиндра оказывался за границей. Поэтому предел выше, а точные повторы
+    убираются, чтобы не получить одно имя четыре раза через точку.
+    """
+    out = []
+    for t in titles:
+        t = t[:38]
+        if t not in out:
+            out.append(t)
+    return " · ".join(out)
 
 
 def short_label(name: str) -> str:
@@ -718,7 +793,7 @@ def build():
                 pan = mini(pid, title_for(n, ru_label(d, n)[:40]), n,
                            (i % 2) * 12, y + (i // 2) * 8, unit, gw=12, gh=8)
             else:
-                pan = panel(pid, " · ".join(ru_label(d, n)[:26] for n, _, d in chunk),
+                pan = panel(pid, join_titles(ru_label(d, n) for n, _, d in chunk),
                             (i % 2) * 12, y + (i // 2) * 8, 12, 8,
                             [target([n for n, _, _ in chunk])], unit)
             panels.append(pan)
@@ -755,7 +830,7 @@ def build():
                            chunk[0][0],
                            (i % 2) * 12, y + (i // 2) * 8, unit, gw=12, gh=8)
             else:
-                pan = panel(pid, " · ".join(short_label(n)[:26] for n, _ in chunk),
+                pan = panel(pid, join_titles(short_label(n) for n, _ in chunk),
                             (i % 2) * 12, y + (i // 2) * 8, 12, 8,
                             [target([n for n, _ in chunk])], unit)
             panels.append(pan)
@@ -785,8 +860,16 @@ def build():
             "type": "query",
             "datasource": DS,
             # __text - что видно в списке, __value - что уходит в запрос
-            "query": "SELECT coalesce(label, name) AS \"__text\", name AS \"__value\" "
-                     "FROM param ORDER BY 1",
+            # Тот же приём, что в metric_sql: имя подставляется в запрос, иначе в
+            # списке выбора остаются старые автопереводы из поля label.
+            # Тот же приём, но только для параметров чужих блоков: у них имя в
+            # поле label - старый автоперевод. У BSI оно верное, взято из ручной
+            # таблицы по DID, и подставлять все 400 имён в запрос незачем -
+            # получалось 34 КБ SQL на одну загрузку дашборда.
+            "query": ("SELECT "
+                      + metric_sql([n for n in sorted(STATS) if ":" in n]
+                                   ).replace("p.name", "name")
+                      + " AS \"__text\", name AS \"__value\" FROM param ORDER BY 1"),
             "multi": True,
             "includeAll": False,
             "refresh": 1,
