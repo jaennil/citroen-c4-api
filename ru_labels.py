@@ -396,8 +396,140 @@ DROP = {"MP", "CFG", "DE", "DU", "DES", "LA", "LE", "LES", "EN", "PAR",
         "POUR", "ET", "OU", "AU", "AUX", "SUR", "New", "NEW", "000"}
 
 
+# Имена параметров чужих блоков - двигателя, ABS/ESP, насоса ГУР.
+#
+# Ключ - мнемоника БЕЗ приставки блока: одно и то же имя в разных блоках значит
+# одно и то же (ID_REFERENCE_MATERIEL есть и у двигателя, и у ABS, и у насоса).
+# Таблица NAMES выше не годится: она ключуется по DID, а у KWP-параметров
+# двигателя своего DID нет вовсе.
+#
+# Без этой таблицы пословный перевод выдавал "Температура d eau двигатель d" и
+# "Rco electrovanne dephaseur acc 1" - словарь WORDS знает 30 слов, а каталог
+# DiagBox написан по-французски целиком.
+MNEMO = {
+    # --- общие идентификаторы блока -----------------------------------------
+    "ID_REFERENCE_MATERIEL": "Номер железа",
+    "ID_REFERENCE_COMPLEMENTAIRE_MATERIEL": "Доп. номер железа",
+    "ID_REFERENCE_LOGICIEL": "Номер ПО",
+    "ID_REFERENCE_FOURNISSEUR": "Номер поставщика",
+    "ID_REFERENCE_PSA": "Номер PSA",
+    "ID_NOM_DU_FOURNISSEUR": "Поставщик блока",
+    "ID_VERSION_LOGICIEL": "Версия ПО",
+    "ID_VERSION_LOGICIEL_NEW_1": "Версия ПО",
+    "ID_EDITION_LOGICIEL": "Редакция ПО",
+    "ID_EDI_CALIB": "Редакция калибровки",
+    "ID_VERSION_DIAGNOSTIC": "Версия диагностики",
+    "ID_DATE_TELECHARGEMENT": "Дата загрузки ПО",
+    "ID_NOMBRE_DE_TELECHARGEMENT": "Число загрузок ПО",
+    "ID_TRACABILITE_DATE_FABRICATION": "Дата изготовления",
+    "ID_80_MP_INDICE_MESS": "Индекс сообщений",
+    "CONFIG_INDICE_TELECODAGE": "Индекс телекодирования",
+
+    # --- ABS/ESP -------------------------------------------------------------
+    "MP_VITESSE_ROUE_AVANT_GAUCHE": "Колесо переднее левое",
+    "MP_VITESSE_ROUE_AVANT_DROIT": "Колесо переднее правое",
+    "MP_VITESSE_ROUE_ARRIERE_GAUCHE": "Колесо заднее левое",
+    "MP_VITESSE_ROUE_ARRIERE_DROITE": "Колесо заднее правое",
+    "MP_NIVEAU_LIQUIDE_DE_FREIN": "Уровень тормозной жидкости",
+    "MP_CONTACTEUR_FEUX_STOP1": "Выключатель стоп-сигнала",
+    "MP_ETAT_RELAIS_ALIMENTATION_EV": "Реле питания электроклапанов",
+    "MP_ETAT_RELAIS_POMPE_RECIRCULATION_1": "Реле насоса рециркуляции",
+    "MP_TENSION_ALIMENTATION_CALCULATEUR_C1": "Питание блока ABS/ESP",
+    "MP_TENSIONGEP_C1": "Напряжение насоса по данным ABS",
+    "MP_VITESSE_VEHICULE_A": "Скорость автомобиля",
+
+    # --- насос гидроусилителя ------------------------------------------------
+    "APC": "Зажигание включено",
+    "CFG____ASSISTANCE_1": "Конфиг: тип усилителя",
+    "INTENSITE_MESUREE": "Ток потребления насоса",
+    "MP_TEMPERATURE_GEP": "Температура насоса ГУР",
+    "MP_TENSION_ALIMENTATION": "Питание насоса ГУР",
+    "MP_VITESSE_MOTEUR_GEP": "Обороты двигателя (по насосу)",
+    "MP_VITESSE_VOLANT_DE_DIRECTION": "Скорость вращения руля",
+    "TYPE_ANGLE_VOLANT_DE_DIRECTION": "Тип датчика угла руля",
+    "MP_ETAT_MOTEUR_THERMIQUE_1_2": "Двигатель работает",
+
+    # --- двигатель: воздух и наполнение --------------------------------------
+    "MP_DEBIT_AIR": "Расход воздуха",
+    "MP_DEBAIRCONS": "Расход воздуха, задание",
+    "MP_PRESSIONTUBULURE": "Давление во впускном коллекторе",
+    "MP_CONSIGNE_PRESSION_ADMISSION": "Давление во впуске, задание",
+    "MP_REMPLISSAGE_MESURE": "Наполнение цилиндров",
+    "MP_REMPLISSAGE_DE_CONSIGNE": "Наполнение цилиндров, задание",
+    "MP_ANGLE_PAPILLON_MESURE": "Угол дросселя",
+    "MP_ANGLE_PAPILLON_CONSIGNE": "Угол дросселя, задание",
+    "MP_TEMP_AIR_ADMISSION_SUP": "Температура воздуха на впуске",
+    "MP_TENSION_RECOPIE_POSITION_PAPILLON_01": "Датчик дросселя 1",
+    "MP_TENSION_RECOPIE_POSITION_PAPILLON_02": "Датчик дросселя 2",
+
+    # --- двигатель: смесь и кислородные датчики -------------------------------
+    "MP_TENSION_SONDE_A_OXYGENE_AMONT": "Датчик кислорода до катализатора",
+    "MP_TENSION_SONDE_A_OXYGENE_AVAL": "Датчик кислорода после катализатора",
+    "MP_ETAT_SONDE_A_OXYGENE_AMONT": "Состояние датчика O2 до катализатора",
+    "MP_ETAT_SONDE_A_OXYGENE_AVAL": "Состояние датчика O2 после катализатора",
+    "MP_ETAT_REGULATION_SONDE_A_OXYGENE_AMONT": "Регулировка по датчику O2 до кат.",
+    "MP_ETAT_REGULATION_SONDE_A_OXYGENE_AVAL": "Регулировка по датчику O2 после кат.",
+    "MP_FACTEUR_CORRECTION_RICHESSE_AMONT": "Коррекция смеси по датчику до кат.",
+    "MP_FACTEUR_CORRECTION_RICHESSE_AVAL": "Коррекция смеси по датчику после кат.",
+    "MP_RCOAMONT": "Скважность регулирования до кат.",
+    "MP_RCOAVAL": "Скважность регулирования после кат.",
+    "MP_CON_RICHESSE": "Задание состава смеси",
+
+    # --- двигатель: зажигание и впрыск ---------------------------------------
+    "MP_REGIME_MOTEUR": "Обороты двигателя",
+    "MP_AVANCE_ALLUMAGE_OPTIMAL": "Угол опережения зажигания, оптимум",
+    "MP_AVANCE_ALLUMAGE_MAXIMUM": "Угол опережения зажигания, максимум",
+    "MP_AVANCE_ALLUMAGE_MINIMUM": "Угол опережения зажигания, минимум",
+    "MP_AVANCE_ALLUMAGE_APPLIQUEE_A_CHAQUE_CYLINDRE": "Угол опережения по цилиндрам",
+    # retrait - снятие угла: так блок глушит детонацию в конкретном цилиндре
+    "MP_RETRAIT_AVANCE_ALLUMAGE_CYLINDRE_01": "Снятие угла от детонации, цил. 1",
+    "MP_RETRAIT_AVANCE_ALLUMAGE_CYLINDRE_02": "Снятие угла от детонации, цил. 2",
+    "MP_RETRAIT_AVANCE_ALLUMAGE_CYLINDRE_03": "Снятие угла от детонации, цил. 3",
+    "MP_RETRAIT_AVANCE_ALLUMAGE_CYLINDRE_04": "Снятие угла от детонации, цил. 4",
+    "MP_TEMPS_INJECTION_CYLINDRE_01": "Время впрыска, цилиндр 1",
+    "MP_TEMPS_INJECTION_CYLINDRE_02": "Время впрыска, цилиндр 2",
+    "MP_TEMPS_INJECTION_CYLINDRE_03": "Время впрыска, цилиндр 3",
+    "MP_TEMPS_INJECTION_CYLINDRE_04": "Время впрыска, цилиндр 4",
+
+    # --- двигатель: фазовращатель --------------------------------------------
+    "MP_POS_DEPHASEUR_ACC_1": "Положение фазовращателя впуска",
+    "MP_CONSIGNE_POSITION_DEPHASEUR_AAC_ADMISSION": "Фазовращатель впуска, задание",
+    "MP_RCO_ELECTROVANNE_DEPHASEUR_ACC_1": "Клапан фазовращателя, скважность",
+    "MP_ETAT_COH_POSITION_AAC_ADMI_VIL": "Согласованность распредвала с коленвалом",
+
+    # --- двигатель: прочее ---------------------------------------------------
+    "MP_TEMPERATURE_D_EAU_MOTEUR_D": "Температура охлаждающей жидкости",
+    "MP_TENSION_ALIMENTATION_CALCULATEUR_CONTROLE_MOTEUR": "Питание блока двигателя",
+    # canister - адсорбер паров бензина, продувается клапаном в впуск
+    "MP_CHARGE_ESTIMEE_CANISTER": "Насыщение адсорбера паров бензина",
+    "MP_CDERCOELECPURGE": "Клапан продувки адсорбера",
+    "MP_COMPTDEMMOT": "Счётчик пусков двигателя",
+    "MP_COMPTEUR_NB_DEMARRAGE_A_FROID": "Счётчик холодных пусков",
+    "MP_DEPASSEMENT_SEUIL_ENCRASSEMENT_MOTEUR": "Порог закоксовывания превышен",
+    "MP_ETAT_PROGRAMMATION_ANTI_DEMARRAGE": "Программирование иммобилайзера",
+    "MP_ETAT_VERROUILLAGE_DEVERROUILLAGE_CALCULTATEUR": "Блокировка блока управления",
+    "MP_PB_TRANSMISSION_CODE_DEVERROUILLAGE": "Сбой передачи кода разблокировки",
+    "MP_OPTION_APPAIRAGE_CHOISIE": "Выбранный вариант привязки",
+    "MP_POSPEDACC1": "Педаль акселератора, датчик 1",
+    "MP_POSPEDACC2": "Педаль акселератора, датчик 2",
+
+    # --- блок реле моторного отсека (ещё не читался, имена заранее) -----------
+    "MP_COMMANDE_FEU_ROUTE_G": "Команда на дальний свет, левый",
+    "MP_COMMANDE_FEU_ROUTE_D": "Команда на дальний свет, правый",
+    "MP_VANNE_COMPR_CLIM": "Клапан компрессора кондиционера",
+    "MP_CONSIGNE_PULSEUR_AIR_HABITACLE": "Задание вентилятору салона",
+}
+
 def humanise(mnemonic: str) -> str:
-    """Грубый пословный перевод. Только для параметров, которых нет в NAMES."""
+    """Название по мнемонике: сперва таблица MNEMO, потом грубый пословный перевод.
+
+    Приставка блока ("V46_32:MP_...") в поиске не участвует и в переводе тоже:
+    иначе она разбивалась по подчёркиваниям и давала "V46 32:mp ..." в легенде.
+    """
+    mnemonic = mnemonic.split(":", 1)[-1]
+    hit = MNEMO.get(mnemonic.upper())
+    if hit:
+        return hit
     parts = [p for p in re.split(r"_+", mnemonic) if p and p.upper() not in DROP]
     out = [WORDS.get(p.upper(), p.lower()) for p in parts]
     text = " ".join(out).strip() or mnemonic
