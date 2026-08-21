@@ -80,7 +80,7 @@ def main():
             problems.append(("нет тултипа", title, ""))
 
         sql = (p.get("targets") or [{}])[0].get("rawSql", "")
-        names = re.findall(r"'([A-Za-z_0-9]+)'", sql)
+        names = re.findall(r"'([A-Za-z0-9_:]+)'", sql)
         known = [n for n in names if n in rng]
 
         # Производная панель: рисует ОДНУ вычисленную серию (например отношение
@@ -123,7 +123,7 @@ def main():
     graph_of = {}
     for p in walk(dash):
         for t in p.get("targets", []):
-            for n in re.findall(r"'([A-Z0-9_a-z]+)'", t.get("rawSql", "")):
+            for n in re.findall(r"'([A-Za-z0-9_:]+)'", t.get("rawSql", "")):
                 if n not in md.STATS:
                     continue
                 seen[n] += 1
