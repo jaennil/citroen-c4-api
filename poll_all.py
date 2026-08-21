@@ -57,6 +57,13 @@ log = logging.getLogger("poll_all")
 # Сколько молчащих запросов подряд терпеть, прежде чем бросить блок.
 MAX_SILENT = 3
 
+# Блоки, которые ВОСПРОИЗВОДИМО кладут интерфейс, и потому в обход не берутся.
+# 0x6C8 VCI: два прогона подряд - в первом дал 24 молчащих запроса и следующий блок
+# уже не поднялся, во втором положил устройство до первого чтения. Что это за блок,
+# толком неизвестно (в соответствии номеров он "VCI"), и терять из-за него весь
+# обход невыгодно.
+SKIP_BLOCKS = {0x6C8}
+
 DEAD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dead_requests.json")
 
 
@@ -179,8 +186,12 @@ def poll_ecu(lex, tx, rx, info, verbose=False, dead=None):
             # continue тут ОБЯЗАТЕЛЕН: без него управление проваливалось на
             # payload[0], вылетал TypeError посреди транзакции и оставлял интерфейс
             # недоделанным - именно это валило сбор через полторы минуты.
+            # НЕ запоминаем. Проверено двумя прогонами подряд: те же запросы ABS в
+            # одном ответили (18 параметров), в другом промолчали, и список сразу
+            # отравил рабочие - блок стал отдавать ноль. Молчание оказалось
+            # свойством состояния, а не запроса. Список остаётся только для того,
+            # что измерено руками и подтверждено (двигатель).
             silent += len(ps)
-            dead.add(req)
             run_silent += 1
             if run_silent >= MAX_SILENT:
                 log.info(f"  0x{tx:03X}: {run_silent} молчащих подряд - "
@@ -208,7 +219,7 @@ def main():
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
-    targets = sorted(ECUS)
+    targets = [k for k in sorted(ECUS) if k[0] not in SKIP_BLOCKS]
     if args.tx:
         want = int(args.tx, 16)
         targets = [k for k in targets if k[0] == want]
