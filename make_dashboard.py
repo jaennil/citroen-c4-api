@@ -400,8 +400,26 @@ def local_stats(db_path=os.path.join(HERE, "car.db")):
         return {}
 
 
-STATS = cluster_stats() or local_stats()
-SOURCE = "кластер" if cluster_stats() else "локальный буфер"
+def merge_stats():
+    """Объединение архива кластера и локального буфера.
+
+    Брать что-то одно нельзя. Кластер - основной источник для Grafana, но вне
+    домашней сети ./fetch-stats.sh не отрабатывает и файл остаётся вчерашним; тогда
+    свежие параметры чужих блоков в него не попадают и панели для них не рисуются.
+    Локальный буфер, наоборот, периодически чистится и теряет историю. Поэтому берём
+    объединение, а по каждому параметру - большее число замеров.
+    """
+    a, b = cluster_stats(), local_stats()
+    out = dict(a)
+    for name, v in b.items():
+        cur = out.get(name)
+        if cur is None or v[0] > cur[0]:
+            out[name] = v
+    return out, a, b
+
+
+STATS, _CL, _LO = merge_stats()
+SOURCE = (f"кластер {len(_CL)} + локально {len(_LO)}, объединение {len(STATS)}")
 COUNTS = {n: v[0] for n, v in STATS.items()}
 DISTINCT = {n: v[1] for n, v in STATS.items()}
 MAXES = {n: v[2] for n, v in STATS.items() if v[2]}
@@ -491,6 +509,34 @@ OVERVIEW = [
     ("Расход средний", "MP_CONSOMMATION_CARBURANT_MOYENNE_TRAJET1", "suffix: л/100км"),
     ("Км до ТО", "MP_NOMBRE_KILOMETRE_AVANT_MAINTENANCE", "suffix: км"),
 ]
+
+
+def ecu_sections():
+    """Параметры чужих блоков, разложенные по блокам.
+
+    Имена у них с приставкой рода блока (V46_32:MP_...), потому что DID у разных
+    блоков совпадают и означают разное. Приставка же даёт и заголовок раздела.
+    Без этого раздела 91 собранный параметр чужих блоков не показывался на
+    дашборде вообще: categorise() перебирает только живые DID BSI.
+    """
+    from ecu_catalog import ECUS
+    fam_ru, unit_of = {}, {}
+    for info in ECUS.values():
+        fam_ru[info["fam"]] = info["ru"]
+        for p in info["params"]:
+            unit_of[f"{info['fam']}:{p['name']}"] = p["unit"]
+    groups = {}
+    for name, (cnt, _, _) in STATS.items():
+        if ":" not in name or not cnt:
+            continue
+        groups.setdefault(name.split(":", 1)[0], []).append((name, unit_of.get(name, "")))
+    return groups, fam_ru
+
+
+def short_label(name: str) -> str:
+    """Заголовок панели: без приставки блока и по-русски, насколько выйдет."""
+    from ru_labels import humanise
+    return humanise(name.split(":", 1)[-1])
 
 
 def build():
@@ -624,6 +670,42 @@ def build():
             panels.append(pan)
             pid += 1
         y += 8 * ((len(chunks) + 1) // 2)
+
+    # --- чужие блоки: двигатель, BSM, ABS и остальные ---
+    groups, fam_ru = ecu_sections()
+    for fam in sorted(groups, key=lambda f: -len(groups[f])):
+        items = sorted(groups[fam])
+        panels.append(row(pid, f"{fam_ru.get(fam, fam)} ({len(items)})", y))
+        pid += 1
+        y += 1
+
+        varying = [(n, u) for n, u in items if not is_constant(n)]
+        consts = [(n, u) for n, u in items if is_constant(n)]
+
+        # Графики только тем, что меняется. Группируем по единице измерения и по
+        # порядку величины - иначе милливольты лямбды и обороты попадут на одну ось.
+        by_unit = {}
+        for n, u in varying:
+            by_unit.setdefault((u, magnitude(n)), []).append((n, u))
+        chunks = []
+        for key in sorted(by_unit, key=lambda k: (str(k[0]), k[1])):
+            grp = by_unit[key]
+            chunks += [grp[j:j + 4] for j in range(0, len(grp), 4)]
+        for i, chunk in enumerate(chunks):
+            unit = UNIT_MAP.get(chunk[0][1], "")
+            pan = panel(pid, " · ".join(short_label(n)[:26] for n, _ in chunk),
+                        (i % 2) * 12, y + (i // 2) * 8, 12, 8,
+                        [target([n for n, _ in chunk])], unit)
+            panels.append(pan)
+            pid += 1
+        y += 8 * ((len(chunks) + 1) // 2)
+
+        if consts:
+            gh = max(5, min(16, 3 + len(consts)))
+            panels.append(latest_table(pid, f"{fam_ru.get(fam, fam)}: постоянные значения",
+                                       [n for n, _ in consts], gh=gh, gy=y))
+            pid += 1
+            y += gh
 
     return {
         "uid": "citroen-c4",
