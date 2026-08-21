@@ -42,6 +42,34 @@ IDENT_UDS = [0xF080, 0xF190, 0xF18C]   # версия ПО, VIN, серийны�
 IDENT_KWP = [0x80, 0xFE, 0x01, 0xC0]   # идентификация, состояние, блоки данных
 
 
+# Закрытие сессии блока перед уходом. Дословно из записи DiagBox.
+#
+# Это и была причина, по которой обход умирал на третьем-четвёртом переключении.
+# Сравнение дампов показало: перед таблицей следующего блока DiagBox всегда шлёт
+# ff/02, а я не шлю ничего. У неё 83 переключения за 997 с без сбоев, у меня три.
+# Оставленные открытыми сессии копятся и исчерпывают интерфейс.
+#
+# Команда своя на каждый протокол: 10 01 - DiagnosticSessionControl в сессию по
+# умолчанию у UDS, 82 - StopCommunication у KWP.
+LEAVE_UDS = "400917c0ff020200000000000000000000000000000000001001cb"
+LEAVE_KWP = "400916c0ff02010000000000000000000000000000000000825c"
+
+_current = None
+
+
+def leave(lex):
+    """Закрыть сессию блока, в котором мы сейчас. Без него интерфейс исчерпывается."""
+    global _current
+    if _current is None:
+        return
+    hx = LEAVE_KWP if is_kwp(_current) else LEAVE_UDS
+    try:
+        lex.transact(bytes.fromhex(hx))
+    except Exception as e:
+        log.warning(f"закрыть сессию 0x{_current[0]:03X} не удалось ({type(e).__name__})")
+    _current = None
+
+
 def groups(frames):
     """Разбить кадры на команды: команда кончается кадром с битом 0x40 в байте 3."""
     out, cur = [], []
@@ -58,9 +86,11 @@ def groups(frames):
 
 def enter(lex, tx, rx, verbose=False):
     """Переключить интерфейс на блок tx/rx. Возвращает ответ на последнюю команду."""
+    global _current
     key = (tx, rx)
     if key not in ENTRY:
         raise KeyError(f"нет записанной последовательности для 0x{tx:03X}")
+    leave(lex)          # сперва закрыть предыдущую сессию, как делает DiagBox
     last = None
     for i, g in enumerate(groups(ENTRY[key]), 1):
         payload, raw = lex.transact_frames(g)
@@ -69,6 +99,7 @@ def enter(lex, tx, rx, verbose=False):
             what = f"{len(g)} кадр(ов), {sum(len(x) for x in g)} байт"
             log.info(f"   вход {i}: {what} -> "
                      f"{describe(payload) if payload else (raw.hex()[:32] or 'нет ответа')}")
+    _current = key
     return last
 
 
