@@ -79,12 +79,22 @@ def did_length(did: int) -> int:
     return max((x["sb"] - 4) + x["ln"] for x in e) if e else 1
 
 
-def connect(retries=0):
-    """Поднять связь с машиной. Возвращает Lexia или None."""
+def connect(settle=0.0):
+    """Поднять связь с машиной. Возвращает Lexia или None.
+
+    settle - пауза между захватом устройства и первой командой. Она нужна: udev
+    поднимает службу в тот же миг, как устройство появилось на шине, а прошивке
+    интерфейса надо успеть встать. Замерено на машине трижды: команда через
+    50 мс после появления кладёт устройство наглухо (дальше USBError [Errno 5] на
+    всё и лечится только переподключением разъёма), а та же команда после
+    ручной паузы проходит нормально.
+    """
     lex = Lexia()
     if not lex.connect():
         return None
     try:
+        if settle:
+            time.sleep(settle)
         lex.drain()
         if not lex.device_boot(verbose=False):
             lex.disconnect()
@@ -189,6 +199,7 @@ def main():
     last_full = 0.0
     period = 1.0 / args.hot_hz if args.hot_hz > 0 else 0.5
     n_hot = n_full = n_reconnect = 0
+    fails = 0
     idle_since = None
     t_report = time.time()
 
@@ -221,8 +232,13 @@ def main():
             log.info("пауза снята, продолжаю сбор")
             paused = False
         if lex is None:
-            lex = connect()
+            # Первая попытка после запуска - с выдержкой; дальше отступ растёт,
+            # чтобы не долбить залипшее устройство раз в три секунды.
+            settle = 3.0 if n_reconnect == 0 else 1.0
+            lex = connect(settle=settle)
             if lex is None:
+                fails += 1
+                back = min(3.0 * fails, 20.0)
                 # Простой - это не только "разъёма нет". Залипшее устройство
                 # открывается, но падает на инициализации, и раньше служба крутилась
                 # в этом цикле бесконечно, потому что счётчик простоя не запускался.
@@ -231,9 +247,10 @@ def main():
                 if args.exit_after_idle and time.time() - idle_since > args.exit_after_idle:
                     log.info(f"устройства нет {args.exit_after_idle:.0f} с - завершаюсь")
                     break
-                time.sleep(3)
+                time.sleep(back)
                 continue
             idle_since = None
+            fails = 0
             n_reconnect += 1
             log.info(f"связь установлена (подключение №{n_reconnect})")
 
