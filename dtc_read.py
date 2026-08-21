@@ -6,9 +6,14 @@
     UDS-блоки  19 02 FF   ReadDTCInformation, ответ 59 02 <маска> <3 байта кода + статус>...
     KWP-блоки  17 FF 00   ReadDiagnosticTroubleCodes, ответ 57 <кол-во> <2 байта кода + статус>...
 
-Расшифровка. Текстов описаний в клоне базы DiagBox НЕТ - там 12 003 кода, и все
-отображены в хеши вида H_a24bfaeb, а сами описания вырезаны. Зато сам код
-закодирован по SAE J2012 и раскладывается арифметикой:
+Расшифровка идёт из трёх источников, в таком порядке.
+
+  1. dtc_names.py - 54 заводских описания, вытащенных из образа DiagBox
+     (см. gen_dtc_names.py). В клоне базы описаний нет: там 12 003 кода, и все
+     отображены в хеши вида H_a24bfaeb, а тексты вырезаны. Зато в самом образе они
+     лежат открытым текстом, и оттуда их удалось достать.
+  2. Таблица KNOWN ниже - стандартные коды OBD-II.
+  3. Сам код по SAE J2012 раскладывается арифметикой, без всякой базы:
 
     старшие 2 бита  система: 00=P двигатель, 01=C шасси, 10=B кузов, 11=U сеть
     биты 13-12      первая цифра
@@ -17,8 +22,9 @@
 
 Проверено на кодах этой машины: 0116 -> P0116, 2299 -> P2299.
 
-Стандартные коды P0xxx описаны здесь таблицей. Заводские коды PSA (обычно вне
-стандартного диапазона) остаются без текста - их значение смотреть в DiagBox.
+Чего словарь не покрывает: в бесплатном образе полной таблицы на 12 003 кода нет,
+там всего 54 записи, в основном по кузовному блоку. Незнакомый заводской код
+выводится кодом с пометкой смотреть в DiagBox.
 
 Запускать через обёртку, иначе драка со службой за USB:
 
@@ -117,8 +123,6 @@ def describe(code: str, failure, status, raw=None) -> str:
         parts.append(NAMES[raw])
     elif code in KNOWN:
         parts.append(KNOWN[code])
-    elif code in KNOWN:
-        parts.append(KNOWN[code])
     elif code[0] == "P" and code[1] == "0":
         parts.append("стандартный код двигателя, описание смотреть в DiagBox")
     else:
@@ -186,10 +190,10 @@ def main():
                       else f"    отказ на запрос: NRC {raw[2]:02X}")
                 continue
             total += len(codes)
-            for code, failure, status, raw in codes:
+            for code, failure, status, raw_code in codes:
                 fail = f" тип {failure:02X}" if failure is not None else ""
                 print(f"    {code}{fail}  статус {status:02X}")
-                print(f"        {describe(code, failure, status, raw)}")
+                print(f"        {describe(code, failure, status, raw_code)}")
         print(f"\nвсего кодов: {total}")
     finally:
         try:
