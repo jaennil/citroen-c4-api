@@ -42,7 +42,7 @@ class Store:
         self.db.commit()
         self._ids = {}
 
-    def param_id(self, did: int, name: str, unit: str = "") -> int:
+    def param_id(self, did: int, name: str, unit: str = "", label: str = "") -> int:
         """Строка параметра по ИМЕНИ, с выдачей синтетического did новым именам.
 
         Раньше опознание шло по did, и это годилось, пока читалась одна BSI. Как
@@ -60,7 +60,9 @@ class Store:
         if name in self._ids:
             return self._ids[name]
         from ru_labels import label as ru_label
-        lab = ru_label(did, name)
+        # Готовый ярлык важнее автоперевода: у кодов неисправностей это описание из
+        # базы DiagBox, и humanise из мнемоники его не соберёт.
+        lab = label or ru_label(did, name)
         row = self.db.execute("SELECT id FROM param WHERE name=?", (name,)).fetchone()
         if row is None:
             taken = did <= 0 or self.db.execute(
@@ -81,10 +83,14 @@ class Store:
         return pid
 
     def write(self, samples, ts=None):
-        """samples: [(did, name, unit, value), ...]"""
+        """samples: [(did, name, unit, value), ...] или [(did, name, unit, value, label), ...]"""
         ts = ts if ts is not None else time.time()
-        rows = [(ts, self.param_id(d, n, u), float(v))
-                for d, n, u, v in samples if isinstance(v, (int, float))]
+        rows = []
+        for s in samples:
+            d, n, u, v = s[:4]
+            lab = s[4] if len(s) > 4 else ""
+            if isinstance(v, (int, float)):
+                rows.append((ts, self.param_id(d, n, u, lab), float(v)))
         self.db.executemany(
             "INSERT INTO reading(ts, param_id, value) VALUES (?,?,?)", rows)
         self.db.commit()

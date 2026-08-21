@@ -35,6 +35,7 @@
 import argparse
 import logging
 import sys
+import time
 
 from ecu import enter, is_kwp
 from ecu_catalog import ECUS
@@ -158,6 +159,7 @@ def read_block(lex, tx, rx):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tx", help="один блок, hex (например 6A8)")
+    ap.add_argument("--sqlite", help="записать найденные коды в базу телеметрии")
     args = ap.parse_args()
 
     targets = sorted(ECUS)
@@ -167,6 +169,11 @@ def main():
         if not targets:
             print("известные адреса: " + " ".join(f"{t:03X}" for t, _ in sorted(ECUS)))
             return 2
+
+    store = None
+    if args.sqlite:
+        from storage import Store
+        store = Store(args.sqlite)
 
     lex = Lexia()
     if not lex.connect():
@@ -190,16 +197,27 @@ def main():
                       else f"    отказ на запрос: NRC {raw[2]:02X}")
                 continue
             total += len(codes)
+            if store:
+                # Код как параметр: имя DTC:<блок>:<код>, значение - байт статуса,
+                # ярлык - описание. Так он попадает в Grafana обычной таблицей, без
+                # отдельной схемы, а история статусов остаётся видна во времени.
+                store.write([(0, f"DTC:{info['fam']}:{c}", "статус", float(st),
+                              describe(c, f, st, rw))
+                             for c, f, st, rw in codes], ts=time.time())
             for code, failure, status, raw_code in codes:
                 fail = f" тип {failure:02X}" if failure is not None else ""
                 print(f"    {code}{fail}  статус {status:02X}")
                 print(f"        {describe(code, failure, status, raw_code)}")
         print(f"\nвсего кодов: {total}")
+        if store:
+            print(f"записано в {args.sqlite}")
     finally:
         try:
             lex.disconnect()
         except Exception:
             pass
+        if store:
+            store.close()
     return 0
 
 
