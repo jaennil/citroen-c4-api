@@ -401,7 +401,15 @@ class Lexia:
         """
         if init_first:
             self.transact(bytes.fromhex(INIT_FRAME))
-        return self.transact(read_frame(payload), deadline=deadline)
+        pl, raw = self.transact(read_frame(payload), deadline=deadline)
+        # Пустая квитанция вместо результата. То же лечение, что у фрагментированных
+        # команд: забрать ещё раз. Без этого первое чтение после входа в блок
+        # выглядело как "запрос молчит", и самообучение помечало мёртвым РАБОЧИЙ
+        # запрос - проверено на машине, 21C08001 объявлялся молчащим через минуту
+        # после успешного чтения им же.
+        if pl is None and empty_result(raw):
+            pl, raw = self._collect(deadline)
+        return pl, raw
 
     def init_session(self):
         return self.transact(bytes.fromhex(INIT_FRAME))
