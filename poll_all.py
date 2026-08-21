@@ -34,6 +34,9 @@ import logging
 import sys
 import time
 
+import json
+import os
+
 import usb.core
 
 from ecu import enter
@@ -42,6 +45,33 @@ from lexia_proto import Lexia, parse_multi, plan_batches, read_frame, read_multi
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("poll_all")
+
+# Запросы, на которые блок не отвечает, запоминаются здесь и больше не посылаются.
+#
+# Зачем. У каталога семейства запросов больше, чем есть на конкретной машине: у
+# двигателя из 13 отвечают 7. Молчащий запрос - это не просто потерянное время: он
+# доводит интерфейс до состояния, из которого тот отвечает USBError [Errno 5] на всё
+# и лечится только переподключением разъёма. Замерено на машине: лёгкий замер одним
+# рабочим запросом проходит, а полная вылазка с шестью молчащими кладёт устройство
+# через полминуты.
+DEAD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dead_requests.json")
+
+
+def load_dead():
+    try:
+        return {k: set(v) for k, v in json.load(open(DEAD_FILE)).items()}
+    except Exception:
+        return {}
+
+
+def save_dead(dead):
+    try:
+        with open(DEAD_FILE, "w") as f:
+            json.dump({k: sorted(v) for k, v in dead.items()}, f,
+                      ensure_ascii=False, indent=1)
+    except Exception as e:
+        log.warning(f"не смог записать {DEAD_FILE}: {e}")
+
 
 # Заглушки "данных нет". Беззнаковые - все единицы и на единицу меньше;
 # знаковые - границы диапазона. Без этой проверки в графики попадали 65.5 В
@@ -84,10 +114,20 @@ def uds_plan(params):
     return by_did, dict(need)
 
 
-def poll_ecu(lex, tx, rx, info, verbose=False):
-    """Прочитать всё, что можно, у одного блока. Возвращает {имя: (значение, ед.)}."""
+def poll_ecu(lex, tx, rx, info, verbose=False, dead=None):
+    """Прочитать всё, что можно, у одного блока. Возвращает {имя: (значение, ед.)}.
+
+    dead - множество запросов этого блока, которые уже показали, что не отвечают.
+    Пополняется на месте и сохраняется вызывающим: молчащие запросы кладут интерфейс.
+    """
     out, refused, silent = {}, 0, 0
-    params = info["params"]
+    fam = info["fam"]
+    if dead is None:
+        dead = set()
+    params = [p for p in info["params"] if p["req"] not in dead]
+    skipped = len(info["params"]) - len(params)
+    if skipped and verbose:
+        log.info(f"  пропущено {skipped} параметров с молчащими запросами")
     by_did, need = uds_plan(params)
 
     # UDS - пачками по DID
@@ -121,10 +161,18 @@ def poll_ecu(lex, tx, rx, info, verbose=False):
             payload, _ = lex.read(bytes.fromhex(req))
         except Exception as e:
             log.warning(f"  0x{tx:03X}: {req} сорвался ({type(e).__name__})")
-            continue
+            raise
         if not payload:
+            # Молчащий запрос запоминаем и больше не трогаем: он не только пустой,
+            # он ещё и подвешивает интерфейс.
             silent += len(ps)
-            continue
+            dead.add(req)
+            log.info(f"  0x{tx:03X}: {req} молчит - больше не спрашиваю, "
+                     f"проход прерван до сохранения списка")
+            # Прерываемся НАМЕРЕННО. Второй молчащий запрос в том же проходе успел бы
+            # положить интерфейс раньше, чем список сохранится, и мы бы учились
+            # заново после каждого переподключения разъёма.
+            break
         if payload[0] == 0x7F:
             refused += len(ps)
             continue
@@ -158,6 +206,7 @@ def main():
         from storage import Store
         store = Store(args.sqlite)
 
+    dead_all = load_dead()
     lex = Lexia()
     if not lex.connect():
         return 1
@@ -174,7 +223,8 @@ def main():
             t0 = time.time()
             try:
                 enter(lex, tx, rx, verbose=args.verbose)
-                vals, refused, silent = poll_ecu(lex, tx, rx, info, args.verbose)
+                dead = dead_all.setdefault(info["fam"], set())
+                vals, refused, silent = poll_ecu(lex, tx, rx, info, args.verbose, dead)
             except usb.core.USBError as e:
                 # Устройство залипло: дальше все запросы будут падать, а их
                 # тысяча. Прекращаем обход, уже собранное записано по блокам.
@@ -197,6 +247,7 @@ def main():
                 store.write([(0, f"{info['fam']}:{n}", u, v)
                              for n, (v, u) in vals.items()], ts=time.time())
         print(f"\nвсего прочитано значений: {grand}")
+        save_dead(dead_all)
     finally:
         lex.disconnect()
         if store:

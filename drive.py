@@ -33,7 +33,7 @@ from did_catalog import BY_DID
 from ecu import enter
 from ecu_catalog import ECUS
 from lexia_proto import Lexia, parse_multi, plan_batches, read_multi_frame
-from poll_all import poll_ecu
+from poll_all import load_dead, poll_ecu, save_dead
 from storage import Store
 from telemetry import ALIASES, DRIVE_FULL_EVERY, DRIVE_HOT, decode, name_of
 
@@ -177,6 +177,10 @@ def main():
             log.info(f"дополнительно снимаю 0x{key[0]:03X} {ECUS[key]['ru']} "
                      f"({len(ECUS[key]['params'])} параметров) раз в {args.ecu_every:.0f} с")
 
+    dead_all = load_dead()
+    log.info("запросов, помеченных молчащими: "
+             + (", ".join(f"{k} {len(v)}" for k, v in sorted(dead_all.items())) or "нет"))
+
     lex = None
     last_ecu = 0.0
     last_quick = 0.0
@@ -252,7 +256,8 @@ def main():
                     continue
                 try:
                     enter(lex, tx, rx)
-                    vals, _, _ = poll_ecu(lex, tx, rx, info)
+                    dead = dead_all.setdefault(info["fam"], set())
+                    vals, _, _ = poll_ecu(lex, tx, rx, info, dead=dead)
                     store.write([(0, f"{info['fam']}:{n}", u, v)
                                  for n, (v, u) in vals.items()], ts=time.time())
                     n_quick += len(vals)
