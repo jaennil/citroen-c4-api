@@ -66,6 +66,11 @@ def decode(p, data: bytes):
     return raw * p["factor"] + p["offset"]
 
 
+def uds_payload(dids):
+    """Нагрузка запроса на несколько DID: 22 <DID><DID>..."""
+    return bytes([0x22]) + b"".join(bytes([(d >> 8) & 0xFF, d & 0xFF]) for d in dids)
+
+
 def uds_plan(params):
     """DID -> сколько байт данных нужно, чтобы накрыть все его параметры."""
     need = collections.defaultdict(int)
@@ -89,7 +94,7 @@ def poll_ecu(lex, tx, rx, info, verbose=False):
     if by_did:
         for chunk in plan_batches(sorted(by_did), need):
             try:
-                payload, _ = lex.transact(read_multi_frame(chunk))
+                payload, _ = lex.read(uds_payload(chunk))
             except Exception as e:
                 log.warning(f"  0x{tx:03X}: запрос сорвался ({type(e).__name__})")
                 continue
@@ -113,7 +118,7 @@ def poll_ecu(lex, tx, rx, info, verbose=False):
         rest[p["req"]].append(p)
     for req, ps in sorted(rest.items()):
         try:
-            payload, _ = lex.transact(read_frame(bytes.fromhex(req)))
+            payload, _ = lex.read(bytes.fromhex(req))
         except Exception as e:
             log.warning(f"  0x{tx:03X}: {req} сорвался ({type(e).__name__})")
             continue

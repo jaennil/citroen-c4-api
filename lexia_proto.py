@@ -385,6 +385,24 @@ class Lexia:
             payload, raw = self._collect(deadline)
         return payload, raw
 
+    def read(self, payload: bytes, deadline: float = 3.0, init_first: bool = True):
+        """Один запрос к текущему блоку, по дисциплине DiagBox.
+
+        ПЕРЕД КАЖДЫМ ЧТЕНИЕМ идёт кадр init (00/fe). Это измерено на записи
+        DiagBox: в сессии двигателя на 235 секунд и 474 чтения узор строго
+        I R I R I R - init, чтение, init, чтение. Без init подряд идущие чтения
+        рано или поздно оставляют устройство в состоянии, из которого оно
+        отвечает USBError [Errno 5] на всё и лечится только переподключением
+        разъёма. Именно на этом разваливались длинные обходы блоков.
+
+        Проверенная там же дисциплина опроса: медиана интервала между опросами
+        готовности 0.5 мс, до 237 опросов на команду, темп команд ~41 мс. То есть
+        частый опрос устройству НЕ вредит - прежняя догадка про это была неверной.
+        """
+        if init_first:
+            self.transact(bytes.fromhex(INIT_FRAME))
+        return self.transact(read_frame(payload), deadline=deadline)
+
     def init_session(self):
         return self.transact(bytes.fromhex(INIT_FRAME))
 
