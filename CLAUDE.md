@@ -499,3 +499,105 @@ conclusion.
 
 Clearing the codes would test the fan theory cheaply, but that is a **write** to the engine
 ECU and everything so far has been read-only - ask before doing it.
+
+## Why block sweeps died, and the five wrong answers (2026-08-21)
+
+A full sweep over the ECUs kept killing the interface after three or four block
+switches: the device stayed enumerated but answered `USBError [Errno 5]` to everything
+and only a **USB replug** brought it back. Five hypotheses were wrong before the right
+one; they are recorded because each looked convincing.
+
+**The cause: no session teardown before switching.** Diffing our own usbmon capture
+against DiagBox's showed that before every next block's configuration table DiagBox
+sends a `ff/02` command and we sent nothing:
+
+    DiagBox   ff/02 -> 00/fe -> 00/05 -> [table 00/16]
+    ours               00/fe -> 00/05 -> [table 00/16]
+
+`ff/02` closes the current session, and the payload depends on the protocol: `10 01`
+(DiagnosticSessionControl, back to default) for UDS blocks, `82` (StopCommunication)
+for KWP ones. DiagBox switched blocks 83 times in 997 s without a single failure; we
+managed three. Left-open sessions accumulate and exhaust the interface. `ecu.leave()`
+now replays the right frame verbatim and `enter()` calls it first.
+
+The four other real bugs found on the way, all of which also had to be fixed:
+
+* **The collector established the link with the legacy `lex.boot()`** while everything
+  else now switches channels with `enter()`. The two configure the channel differently.
+  Symptom: the link "comes up", a full BSI snapshot runs and writes **zero** values,
+  and a minute later reads time out. Manual tests worked because they used `enter()`.
+* **A missing `continue`** in `poll_ecu` let control fall through to `payload[0]` on an
+  empty answer, raising `TypeError` mid-transaction and leaving the interface half-done.
+  This mimicked a hardware fault perfectly - collection died after ~90 s.
+* **The first read after entering a block returns an empty receipt**, not data. Fragmented
+  commands already refetched in that case; plain reads did not, so a *working* request
+  looked silent. `Lexia.read()` refetches now.
+* **A silent path** returned to BSI after a KWP excursion without logging anything, so the
+  journal held a 69-second hole instead of an error. Never fail silently here.
+
+**Silence is a property of state, not of the request.** Two attempts to learn which
+requests "don't answer" and skip them made things worse: the same ABS requests returned
+18 parameters in one run and nothing in the next, and the learned list then poisoned the
+working ones. `dead_requests.json` is kept, but only for what was measured by hand -
+the engine's eight non-answering requests, which cut its read from 11.3 s to 1.6 s for
+51 parameters.
+
+Two operational rules that saved a lot of replugs:
+
+* **Set the pause flag BEFORE the user replugs.** udev starts the collector the instant
+  the device appears and it grabs the interface mid-enumeration, which wedges it. With
+  the flag pre-set the service parks, the device comes up clean, and the flag is removed
+  afterwards. `with-lexia.sh` waits on the service's actual USB file descriptor.
+* **Never bus-reset a wedged device.** `dev.reset()` does not revive it, it finishes it
+  off - the Lexia leaves the bus entirely (gone from `lsusb` with the cable in and the
+  LED lit) and only a physical replug helps. `reset_lexia.py` refuses by default.
+
+Restarting the service does not heal a wedged device; it only loads new code. Note also
+that the interface is USB-powered, so pulling the OBD end changes nothing.
+
+## Fault codes, with descriptions from the DiagBox image
+
+`dtc_read.py` reads DTCs from every block - `19 02 FF` for UDS blocks, `17 FF 00` for
+KWP - and decodes them three ways: the dictionary extracted from the image, a table of
+standard OBD-II codes, and SAE J2012 arithmetic. `--sqlite car.db` writes each code as a
+parameter named `DTC:<family>:<code>` with the status byte as the value and the
+description as the label, so the dashboard shows them as a table with no schema change.
+
+**The descriptions were extracted from the DiagBox VM image**, without booting it.
+`dtc_groups_lightweight` in the DB clone has 12 003 codes mapped to hashes like
+`H_a24bfaeb` with the texts stripped - and those hashes appear nowhere in the image, so
+they are the repo's own invention. The image itself carries the texts in plain ASCII as
+consecutive triplets:
+
+    C01988
+    B-CAN
+    B_CAN_1078
+
+code, description, mnemonic. `gen_dtc_names.py` scans `strings` output of the whole
+14 GB image (365 M lines) and validates each triplet by **self-consistency**: the
+mnemonic is the description in snake_case, so normalising both and requiring a prefix
+match rejects noise. Validating against the catalogue instead does not work - it holds
+9363 four-character keys against 585 six-character ones, i.e. a different code format.
+Yield: 54 manufacturer descriptions, mostly body-computer ones, including
+`90251D High Beam command (relay) - circuit short to battery`. The free image simply
+does not carry the full table.
+
+This car's own codes decode without any dictionary: `0116` -> **P0116** (coolant
+temperature circuit) and `2299` -> **P2299** (brake pedal / accelerator pedal position
+incompatible). The second one had been printed as raw hex for days before being decoded.
+
+## Coolant sensor: what is and is not available
+
+Nine readings of `MP_TEMPERATURE_D_EAU_MOTEUR_d` collected across two days: 85 °C right
+after a start, then 92-96 °C warm, always consistent with engine speed. **Every sample
+was plausible** - the sensor has never been caught lying, and no sample coincided with
+the cooling fan running hard. P0116 remains stored, which is what keeps the fan in
+fail-safe.
+
+There is **no voltage or resistance reading for this sensor on this ECU.** The parameter
+`MP_TENSION_CAPTEUR_TEMPERATURE_EAU` exists in the DiagBox database, but only for the
+MED17_4_4, MEVD17_4_4 and MD1CS069 families - Bosch units from other engines. No V46
+file has it, which is why the label "Voltage of the coolant temperature sensor" is
+present in the image yet unreadable here. Lambda voltages, by contrast, are available and
+read 112 and 102 mV. Catching an open circuit therefore needs a multimeter at the sensor
+connector, not diagnostics.
