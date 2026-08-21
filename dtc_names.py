@@ -1,0 +1,66 @@
+"""
+Описания кодов неисправностей, вытащенные из образа DiagBox.
+
+СГЕНЕРИРОВАН gen_dtc_names.py - править руками не надо, перегенерируй.
+
+NAMES[код] = описание. Коды в том же виде, что в каталоге DiagBox:
+шесть шестнадцатеричных знаков. Для стандартных кодов OBD-II их можно
+привести к виду P0116 функцией dtc_read.code_of.
+"""
+
+NAMES = {
+    "0010": "Speed Sensitive",
+    "0011": "Rain Sensitive",
+    "0100": "Type P4",
+    "0101": "Type P3 MMAL",
+    "0110": "Type P4 MMAL",
+    "1010": "Light sensor values temporarily not plausible",
+    "545A": "AWD Clutch Return Control Circuit Low",
+    "545F": "AWD System Temporarily Disabled - Overtemperature",
+    "611E": "Battery Supply Voltage Low",
+    "900118": "Transponder  - ID deleted/disabled with secret code valid",
+    "900202": "IMMO Coil  - short circuit between the pins",
+    "900309": "RF module",
+    "900412": "Cilc - signal circuit short to battery",
+    "900413": "Cilc - signal open ciruit.",
+    "900512": "Left Rear Fog light - circuit short to battery",
+    "900513": "Left Rear Fog light - open circuit",
+    "900713": "LTurnLight - open circuit",
+    "900813": "RTurnLight - open circuit",
+    "900818": "RTurnLight - bulb failure",
+    "901064": "Brakeswitches - Signal plausibility failure",
+    "901067": "Brakeswitches - Plausibility",
+    "901619": "Front Wiper Command High Speed - short circuit to ground or over load",
+    "901819": "Front Wiper Command Low Speed - short circuit to ground or over load",
+    "902012": "Comfort Enable Supply - short circuit to battery",
+    "902019": "Comfort Enable Supply - short circuit to ground or over load",
+    "902112": "Right/Front ParkingLight  - circuit short to battery",
+    "902118": "Right/Front ParkingLight  - bulb failure",
+    "902119": "Right/Front ParkingLight  - circuit short to ground or over load",
+    "902212": "Left/Rear ParkingLight  - circuit short to battery",
+    "902218": "Left/Rear ParkingLight  - bulb failure",
+    "902312": "PlateLight  - circuit short to battery",
+    "902319": "PlateLight  - circuit short to ground or over load",
+    "902412": "Right Rear Fog light - circuit short to battery",
+    "90251D": "High Beam  command (relay) - circuit short to battery - over load",
+    "902613": "Stop Light Center High Mounted - open circuit",
+    "902813": "Right StopLight - open circuit",
+    "903019": "Head Lamp Washer relay - circuit short to battery or over load",
+    "903312": "Daytime Running Light - circuit short to battery",
+    "903544": "System Failure - RAM read/write error in RAM area",
+    "903545": "System Failure - ROM checksum error in ROM area",
+    "903546": "System Failure - EEPROM write error in EEPROM area",
+    "904119": "DD Aiar to MTA - circuit short to battery or overload",
+    "904319": "Rear Defroster LED - circuit short to ground or overload",
+    "904823": "City Button",
+    "904971": "Trunk releasing relay stuck condition - actuator stuck",
+    "905018": "Front wiper - cam control problem",
+    "905019": "Front wiper - wiper motor blocked",
+    "905119": "Rear wiper - wiper motor blocked",
+    "905513": "window lifter up left motor output - open curcuit",
+    "905813": "window lifter down right motor output - open curcuit",
+    "D70687": "BSM - Brake Control Module - node on C CAN",
+    "D72487": "PAM - Parking Assistant Module - node on B CAN",
+    "D73087": "CTM L3 - Convergence Telematic Module - node on C CAN",
+    "D73387": "CTM L1 L2 - Convergence Telematic Module - node on B CAN",
+}

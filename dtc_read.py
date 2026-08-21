@@ -86,7 +86,8 @@ def parse_uds(pl: bytes):
     body = pl[3:]
     for i in range(0, len(body) - 3, 4):
         code = code_of(body[i], body[i + 1])
-        out.append((code, body[i + 2], body[i + 3]))
+        raw = raw_hex(body[i], body[i + 1], body[i + 2])
+        out.append((code, body[i + 2], body[i + 3], raw))
     return out
 
 
@@ -95,13 +96,28 @@ def parse_kwp(pl: bytes):
     out = []
     body = pl[2:]
     for i in range(0, len(body) - 2, 3):
-        out.append((code_of(body[i], body[i + 1]), None, body[i + 2]))
+        out.append((code_of(body[i], body[i + 1]), None, body[i + 2],
+                    raw_hex(body[i], body[i + 1])))
     return out
 
 
-def describe(code: str, failure, status) -> str:
+def raw_hex(hi: int, lo: int, extra=None) -> str:
+    """Код в том же виде, в каком он лежит в базе DiagBox - для словаря dtc_names."""
+    s = f"{hi:02X}{lo:02X}"
+    return s + (f"{extra:02X}" if extra is not None else "")
+
+
+def describe(code: str, failure, status, raw=None) -> str:
     parts = []
-    if code in KNOWN:
+    # Словарь, вытащенный из образа DiagBox (см. gen_dtc_names.py): 54 заводских
+    # описания. Их немного - в бесплатном образе полной таблицы на 12 003 кода нет,
+    # - но то, что есть, точнее любой догадки, потому берём в первую очередь.
+    from dtc_names import NAMES
+    if raw and raw in NAMES:
+        parts.append(NAMES[raw])
+    elif code in KNOWN:
+        parts.append(KNOWN[code])
+    elif code in KNOWN:
         parts.append(KNOWN[code])
     elif code[0] == "P" and code[1] == "0":
         parts.append("стандартный код двигателя, описание смотреть в DiagBox")
@@ -170,10 +186,10 @@ def main():
                       else f"    отказ на запрос: NRC {raw[2]:02X}")
                 continue
             total += len(codes)
-            for code, failure, status in codes:
+            for code, failure, status, raw in codes:
                 fail = f" тип {failure:02X}" if failure is not None else ""
                 print(f"    {code}{fail}  статус {status:02X}")
-                print(f"        {describe(code, failure, status)}")
+                print(f"        {describe(code, failure, status, raw)}")
         print(f"\nвсего кодов: {total}")
     finally:
         try:
