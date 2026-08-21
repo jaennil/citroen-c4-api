@@ -144,8 +144,15 @@ def main():
     ap.add_argument("--ecus",
                     default="6A8,747,6A8,742,6AD,75F,6C8,6B5,730,744,731,77B",
                     help="адреса чужих блоков через запятую, hex; пусто - только BSI")
-    ap.add_argument("--ecu-every", type=float, default=300.0,
-                    help="как часто снимать чужие блоки полностью, с")
+    # ПОЛНАЯ вылазка по умолчанию ВЫКЛЮЧЕНА (0). Она кладёт интерфейс: проверено
+    # трижды на машине, через 30-60 с после начала обхода двигателя приходит
+    # USBTimeoutError, и дальше устройство отвечает USBError [Errno 5] на всё до
+    # переподключения разъёма. Лёгкий замер (QUICK) при этом проходит стабильно,
+    # поэтому он и остаётся включённым: BSI собирается, температура ОЖ и обороты
+    # двигателя пишутся раз в минуту, а рискованный обход включается вручную
+    # флагом --ecu-every 300, когда есть кому смотреть за результатом.
+    ap.add_argument("--ecu-every", type=float, default=0.0,
+                    help="как часто снимать чужие блоки ПОЛНОСТЬЮ, с; 0 - выключено")
     ap.add_argument("--quick-every", type=float, default=60.0,
                     help="как часто делать лёгкий замер (см. QUICK), с; 0 - выключить")
     ap.add_argument("--exit-after-idle", type=float, default=0,
@@ -184,8 +191,9 @@ def main():
             log.warning(f"блока 0x{want:03X} нет в каталоге - пропускаю")
         else:
             extra.append(key)
-            log.info(f"дополнительно снимаю 0x{key[0]:03X} {ECUS[key]['ru']} "
-                     f"({len(ECUS[key]['params'])} параметров) раз в {args.ecu_every:.0f} с")
+            if args.ecu_every:
+                log.info(f"полный снимок 0x{key[0]:03X} {ECUS[key]['ru']} "
+                         f"({len(ECUS[key]['params'])} параметров) раз в {args.ecu_every:.0f} с")
 
     dead_all = load_dead()
     log.info("запросов, помеченных молчащими: "
@@ -291,7 +299,8 @@ def main():
 
         # Проверка флага ещё и здесь: вылазка занимает до 15 с, и если начать её
         # с уже поставленным флагом, тот, кто просит USB, будет ждать всю вылазку.
-        if extra and t0 - last_ecu >= args.ecu_every and not os.path.exists(PAUSE_FLAG):
+        if (args.ecu_every and extra and t0 - last_ecu >= args.ecu_every
+                and not os.path.exists(PAUSE_FLAG)):
             last_ecu = t0
             # По ОДНОМУ блоку за вылазку, по кругу. Обойти все тринадцать за раз -
             # это минуты, в которые не идёт ничего другого. Частоту отдельного
