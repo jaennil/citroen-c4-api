@@ -612,6 +612,21 @@ def build():
     pid += 1
     y += 8
 
+    # --- коды неисправностей ---
+    # Стоят выше обозревателя намеренно: если в машине что-то не так, это первое,
+    # что надо увидеть. Пишутся сюда dtc_read.py --sqlite как параметры с именем
+    # DTC:<блок>:<код>, значение - байт статуса, ярлык - описание из базы DiagBox.
+    dtc_names = sorted(n for n in STATS if n.startswith("DTC:"))
+    if dtc_names:
+        panels.append(row(pid, f"Коды неисправностей ({len(dtc_names)})", y))
+        pid += 1
+        y += 1
+        gh = max(5, min(14, 3 + len(dtc_names)))
+        panels.append(latest_table(pid, "Найденные коды: блок, описание, статус",
+                                   dtc_names, gh=gh, gy=y))
+        pid += 1
+        y += gh
+
     # --- обозреватель: через него доступны ВСЕ параметры ---
     panels.append(row(pid, "Обозреватель - любой из параметров", y, collapsed=False))
     pid += 1; y += 1
