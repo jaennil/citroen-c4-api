@@ -54,7 +54,7 @@ FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> bsiBus;     // сторона BSI
 // здесь не подстраховка, а часть защиты.
 //
 // Два с половиной - с запасом: обычный проход loop() занимает микросекунды.
-static const uint32_t WDT_SECONDS = 2.5;
+static const float WDT_SECONDS = 2.5f;   // float: в uint32_t 2.5 обрезалось бы до 2
 WDT_T4<WDT1> wdt;
 
 static const int PIN_RELAY = 2;
