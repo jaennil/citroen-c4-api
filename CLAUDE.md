@@ -291,10 +291,10 @@ decodings are clearly wrong in the same way the BSI's were - oil temperature rea
 BSM_2010 has `MP_COMMANDE_FEU_ROUTE_G/D` - the commanded state of the left/right high beam
 outputs - readable at `22D440`, bit masks 2 and 1, plus dipped beam at `22D430` and the
 inhibit flags at `22D810/22D820`. That is **visibility, not control**: no BSM_2010 file in
-the DB has any `VA*` group at all, so DiagBox has no actuator test for it. Still worth one
-cheap live experiment (`2F D440`), since the BSI's DB entry also under-reported what the
-block actually accepts. The MITM conclusion stands; the BSM readouts give a way to verify
-a MITM works.
+the DB has any `VA*` group at all, so DiagBox has no actuator test for it. The diagnostic
+route is not being pursued any further - see the closed-route note above. What these DIDs are
+for now is **verification**: reading `22D440` says whether the block was actually asked for
+high beam, which is the independent check that a working MITM really did what it claims.
 
 ## Local DiagBox DB clone
 
