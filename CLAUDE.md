@@ -24,7 +24,7 @@ The single most important thing to know: there are two completely separate ways 
 
 ### Path A - ELM327 over the OBD-II port (`pyserial`)
 
-Files: `00_*.py`, `01_*.py`, `02_*.py`, `03_analyze_dump.py`, `04_strobe.py`, `dashboard.py`, `monitor.py`, `quick_test.py`, `try_lights*.py`.
+Files: `00_*.py`, `01_*.py`, `02_*.py`, `03_analyze_dump.py`, `dashboard.py`, `monitor.py`, `quick_test.py`.
 
 All of these open a serial port at 38400 baud and speak ELM327 AT commands. Each script reimplements the same `send_cmd`/`cmd` helper: write `"<cmd>\r"`, read until the `>` prompt appears, strip it. Standard init is `ATZ, ATE0, ATL0, ATS0, ATH1, ATSP6` (protocol 6 = ISO 15765-4 CAN 11-bit 500 kbps), plus `ATCAF0` to get raw unformatted frames.
 
@@ -36,11 +36,11 @@ What works on this path: plain OBD-II mode-01 PIDs. `dashboard.py` is the useful
 
 Separately, this particular USB adapter (`0918:7104`, reports `ELM327 v1.5`) has a broken `ATMA`: it returns zero frames even with the engine running and the powertrain bus demonstrably busy.
 
-What does not work: light control. Bus sniffing via `ATMA` never produced anything - `can_dump.log` is empty and `can_raw.log` holds a single junk line - so `03_analyze_dump.py` (which diffs a lights-off dump against a lights-on dump per CAN ID) has never had real input. `04_strobe.py` writes to CAN ID `0x128` and `try_lights2.py` tries UDS sessions against BSI (TX `0x752` / RX `0x652`), PROJECTEURS (`0x6B7`/`0x697`), the stalk (`0x742`/`0x642`) and the cluster (`0x75F`/`0x65F`). Note the caveat written into `04_strobe.py`: `0x128` is an *indicator* message (BSI telling the cluster what is lit), not a command, so replaying it would not switch a lamp even if the frames reached the right bus. This path was abandoned in favor of Path B.
+What does not work: light control. Bus sniffing via `ATMA` never produced anything - `can_dump.log` is empty and `can_raw.log` holds a single junk line - so `03_analyze_dump.py` (which diffs two dumps per CAN ID) has never had real input. It is kept because the same diff is exactly what is needed to decode the stalk frame once the MITM can listen. The scripts that tried to write light commands over ELM (`04_strobe.py`, `try_lights*.py`) are deleted; two conclusions from them are worth keeping. `0x128` is an *indicator* message - BSI telling the cluster what is lit, not a command - so replaying it would never switch a lamp. And UDS sessions were tried against BSI (`0x752`/`0x652`), PROJECTEURS (`0x6B7`/`0x697`), the stalk (`0x742`/`0x642`) and the cluster (`0x75F`/`0x65F`), all silent, because the ELM does not wire the DiagOnCan pair at all.
 
 ### Path B - Lexia 3 over raw USB (`pyusb`) - the working one
 
-Files: `lexia.py`, `police_mode.py`, `police2.py`, `blink_test.py`, plus `sniff_lexia_usb.py` for capture.
+Files: `lexia_proto.py` (protocol), `lexia_boot.py` (device handshake), `ecu.py` (block switching), plus `sniff_lexia_usb.py` for capture.
 
 A Lexia 3 (PSA dealer interface, USB `103a:f008`) is driven directly through libusb: bulk EP OUT `0x06`, bulk EP IN `0x85`, 64-byte reads. Connecting means detaching the kernel driver and claiming interface 0, which needs root or a udev rule.
 
@@ -57,29 +57,42 @@ Every command follows the same four-step cycle that DiagBox uses:
 3. read the result with `430901c0f2`
 4. acknowledge with `064409`
 
-`police_mode.py` implements this faithfully in `send_and_poll`; `police2.py` and `blink_test.py` use trimmed-down variants that skip waits for speed. Session init before any actuator is `400915c000fe0000aa00000000000000000000000000000039`.
+`lexia_proto.Lexia.transact()` implements this. Session init before any vehicle traffic is `400915c000fe0000aa00000000000000000000000000000039` (`INIT_FRAME`).
 
-An actuator command is the fixed prefix `40091bc0ff06060001` padded with zeros, followed by `2f d8 <actuator_id> 03 0a 01 <checksum>`, where `checksum = (0xBA - actuator_id) & 0xFF`. The `2f` is UDS InputOutputControlByIdentifier. Known actuator IDs:
+**The diagnostic route to the lights is closed, and all of it is deleted.** Recorded so it is
+not reopened. UDS service `2F` (InputOutputControlByIdentifier) on DIDs `D8xx` did drive some
+lamps: `2F D8 70` returned `6F D8 70 03` and the side lights physically lit, measured
+2026-08-16. But the route is useless for the goal and has been abandoned, for three separate
+reasons, each measured on this car rather than assumed:
 
-| ID | Light | Status on this car |
-|----|-------|--------------------|
-| `0x70` | side lights | reads OK (`62 D870`) |
-| `0x71` | right indicator | reads OK (`62 D871`) |
-| `0x72` | left indicator | reads OK |
-| `0x73` | rear fog | in DiagBox actuator menu |
-| `0x74` | reversing lamps | in DiagBox actuator menu |
-| `0x75` | brake light | reads OK |
-| `0x29`/`0x2A` | dipped beam L/R | **absent** - `7F 22 31` |
-| `0x2B` | **main beam** | **absent** - `7F 22 31` |
-| `0x2C` | front fog | **absent** - `7F 22 31` |
+* **The headlamps are not in it at all.** `22 D8 2B` (main beam) returns `7F 22 31`
+  requestOutOfRange, as do `D829`, `D82A` (dipped L/R) and `D82C` (front fog), while `D870`
+  and `D871` read fine in the very same session - so it is not a chain or session problem,
+  those DIDs genuinely do not exist on this variant. DiagBox agrees: its `BSI2010
+  LIGHTING - SIGNALLING` actuator list here holds only the `D87x` block (side lights,
+  indicators, rear fog, reversing, brake, plus courtesy/boot/black-panel items) and offers no
+  main-beam test. `22 D826`, availability of automatic main/dipped switching, reads `00`. In
+  the DiagBox database `MP_COMMANDE_FEUX_DE_ROUTE` (`D82B`) appears only in
+  `MESUREPARAMETRE2E_VARB*`, the AFS/bi-function-headlamp variant, while the confirmed `D87x`
+  ids live in `MESUREPARAMETRE3E`, present in every variant.
+* **It only works with the engine off.** A/B tested in one session each: engine off and
+  ignition on, `2F D8 70` lights the lamp; engine running at ~750 rpm, the identical frame
+  returns `7F 2F 22` conditionsNotCorrect every time, while `22 D8 70` still reads fine. The
+  gate is specific to service `2F` and keyed on engine state. An earlier research pass claimed
+  a forum user ran PSA light actuator tests with the engine running; that is wrong for this car.
+* **The BSI latches an actuator for ~3 s and no off command exists.** Re-sending the same
+  command inside the latch also returns `7F 2F 22` and does *not* extend it, so
+  `conditionsNotCorrect` means either "engine running" or "test already active". This also
+  explains the lone `7F 2F 22` in the original `lexia_usb.log`, which earlier analysis misread
+  as a general precondition gate.
 
-**Settled: this BSI cannot drive the headlamps at all.** Measured with `probe_bsi.py` on 2026-08-16 with a working link: `22 D8 2B` returns `7F 22 31` requestOutOfRange, as do `D829`, `D82A` and `D82C`, while `D870`/`D871` read fine in the very same session - so it is not a chain or session problem, the DIDs genuinely do not exist here. DiagBox agrees: its `BSI2010 LIGHTING - SIGNALLING` actuator list on this car contains only the `D87x` block (side lights, indicators, rear fog, reversing, brake, plus courtesy/boot/black-panel items) and offers no main-beam test. `22 D826` (availability of automatic main/dipped switching) reads `00`, i.e. not available. This matches the DiagBox database, where `MP_COMMANDE_FEUX_DE_ROUTE` (`D82B`) appears only in `MESUREPARAMETRE2E_VARB*` - the AFS/bi-function-headlamp variant - while the confirmed `D87x` ids live in `MESUREPARAMETRE3E`, present in every variant. Do not spend more time on main beam via UDS `2F`; the remaining routes are a MITM on the LS.CAR body bus rewriting the stalk frame, or a relay interposer at the headlamp connector.
+Note that the DB has no actuator groups for the BSI at all - checked across all 35 `BSI2010*`
+files, every group is `MESUREPARAMETRE*`. `VA*` actuator groups exist only for engine, gearbox
+and ABS families. So the `D87x` palette above came from the USB capture and live probing, and
+the full list could only ever be found by scanning `22 D8xx` live.
 
-The key behavioral constraint that shapes all the "modes": the BSI latches an actuator on for roughly 3 seconds and no off command is known. Blinking is therefore done by re-sending init+actuate faster than that timeout expires, or by firing a different actuator to preempt the current one - that is the whole idea behind `police2.py`'s spam loop and the experiments in `blink_test.py` (which also probes an unconfirmed off variant: trailing byte `00` instead of `01`, checksum incremented).
-
-**Actuator tests require ignition ON with the engine OFF - measured, not folklore.** A/B tested on 2026-08-16 in one session each. Engine off, ignition on: `2F D8 70` returns `6F D8 70 03` and the side lights physically light. Engine running at ~750 rpm (BSI supply 14.28 V, vehicle speed 0): the identical frame returns `7F 2F 22` conditionsNotCorrect on every attempt, three tries spaced 4 s apart, while `22 D8 70` and `22 D8 71` still read `62 ... 00` in the same session. So the gate is specific to service `2F` and keyed on engine state; the link and the DIDs are fine. An earlier research pass claimed a forum user ran PSA light actuator tests with the engine running and concluded the engine-off rule was an unfounded local convention - that conclusion is wrong for this car.
-
-A second, separate meaning of the same NRC: while an actuator test is already latched, re-sending the same command also returns `7F 2F 22`, and it does **not** extend the latch. So `conditionsNotCorrect` here means either "engine running" or "test already active". To hold a lamp on, re-send just after the ~3 s latch expires (`lights.py` uses `LATCH + 0.25`); re-sending sooner is silently rejected and leaves a brief gap when the latch lapses. This also explains the lone `7F 2F 22` in the original `lexia_usb.log`, which earlier analysis misread as evidence of a general precondition gate.
+The remaining route to the headlamps is the MITM on the LS.CAR body bus rewriting the stalk
+frame (see below), or a relay interposer at the headlamp connector.
 
 Vehicle state is readable while the engine runs, which makes tests self-documenting - see `car_state.py`: `22DBA8` engine rpm (factor 0.125), `22DB61` vehicle speed (0.01 km/h), `22DA44` BSI supply voltage (0.001 V), `22DD18` key position, `22DD03` powertrain state. Data begins at index 3 of the `62 D8 xx ...` payload. `22DA46` battery voltage reads `FFFE`, i.e. not available.
 
