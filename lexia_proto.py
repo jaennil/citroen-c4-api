@@ -34,7 +34,6 @@ TIMEOUT = 3000
 
 INIT_FRAME = "400915c000fe0000aa00000000000000000000000000000039"
 READ_PREFIX = "400918c0ff06030001" + "00" * 15      # для 3-байтной нагрузки (22 D8 xx)
-ACT_PREFIX = "40091bc0ff06060001" + "00" * 15       # для 6-байтной (2F D8 xx 03 0A 01)
 
 POLL = "410901c0f4"
 FETCH = "430901c0f2"
@@ -143,11 +142,6 @@ def parse_multi(payload: bytes, lengths: dict) -> dict:
         out[did] = b[i:i + ln]
         i += ln
     return out
-
-
-def actuate(did: int, on: bool = True) -> bytes:
-    """UDS 2F D8 xx 03 0A 01 - InputOutputControlByIdentifier."""
-    return frame(ACT_PREFIX, bytes([0x2F, 0xD8, did, 0x03, 0x0A, 0x01 if on else 0x00]))
 
 
 def link_status(resp: bytes):
@@ -505,13 +499,10 @@ def self_test():
     assert extract_payload(ok_neg) == bytes.fromhex("7f2f22"), extract_payload(ok_neg)
     assert read_did(0x71) == bytes.fromhex(
         "400918c0ff0603000100000000000000000000000000000022d8716a")
-    assert actuate(0x75) == bytes.fromhex(
-        "40091bc0ff060600010000000000000000000000000000002fd875030a0145")
     print("парсер и конструктор кадров сходятся с дампом:")
     print(" ", describe(extract_payload(ok_read)))
     print(" ", describe(extract_payload(ok_neg)))
     print("  read  22 D8 2B ->", read_did(0x2B).hex())
-    print("  actu  2F D8 2B ->", actuate(0x2B).hex())
 
 
 if __name__ == "__main__":
