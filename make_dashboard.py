@@ -685,6 +685,116 @@ def build():
     panels.append(combo)
     pid += 1; y += 8
 
+    # --- ДТОЖ и вентилятор: панель под охоту за отваливающимся датчиком ------
+    # Строится ВСЕГДА, даже когда данных ещё нет: пока watch_coolant.py ни разу
+    # не запускался, панель показывает "No data", и это правильнее, чем спрятать
+    # её - иначе непонятно, куда смотреть после первой охоты.
+    #
+    # Две оси обязательны: температура около 95, реле - ноль или единица, и на
+    # общей шкале реле легло бы в линию по нулю.
+    panels.append(row(pid, "Датчик температуры ОЖ и вентилятор", y, collapsed=False))
+    pid += 1; y += 1
+
+    COOL = "V46_32:MP_TEMPERATURE_D_EAU_MOTEUR_d"
+    FANR = "V46_32:MP_ETAT_RELAIS_GMV"
+    FANS = "V46_32:MP_CONSIGNE_VITESSE_GMV_C5"
+    # Реле умножается на 100: само оно ноль или единица, а правая ось общая с
+    # заданием скорости в процентах, и единица прижалась бы к оси до невидимости.
+    hunt_sql = (
+        'SELECT r.ts AS "time", \'Температура охлаждающей жидкости\' AS metric, r.value\n'
+        "FROM reading r JOIN param p ON p.id = r.param_id\n"
+        f"WHERE p.name = '{COOL}' AND $__timeFilter(r.ts)\n"
+        "UNION ALL\n"
+        'SELECT r.ts, \'Реле вентилятора (100 = включено)\', r.value * 100\n'
+        "FROM reading r JOIN param p ON p.id = r.param_id\n"
+        f"WHERE p.name = '{FANR}' AND $__timeFilter(r.ts)\n"
+        "UNION ALL\n"
+        'SELECT r.ts, \'Задание скорости вентилятора\', r.value\n'
+        "FROM reading r JOIN param p ON p.id = r.param_id\n"
+        f"WHERE p.name = '{FANS}' AND $__timeFilter(r.ts)\n"
+        "ORDER BY 1"
+    )
+    hunt = panel(pid, "Температура ОЖ и вентилятор вместе", 0, y, 24, 9,
+                 [{"refId": "A", "datasource": DS, "format": "time_series",
+                   "rawQuery": True, "rawSql": hunt_sql}], "celsius")
+    hunt["fieldConfig"]["defaults"]["custom"] = {
+        "lineWidth": 2, "fillOpacity": 8, "showPoints": "never", "spanNulls": False,
+        "axisLabel": "°C",
+    }
+    # spanNulls False намеренно: если датчик пропал и значение не пришло, в графике
+    # должен быть РАЗРЫВ, а не прямая через пропуск. Разрыв тут и есть событие.
+    hunt["fieldConfig"]["defaults"]["thresholds"] = {
+        "mode": "absolute",
+        "steps": [{"value": v, "color": c} for v, c in (norms.steps(COOL) or [])],
+    }
+    hunt["fieldConfig"]["defaults"].setdefault("custom", {})["thresholdsStyle"] = {"mode": "area"}
+    rng = norms.axis(COOL)
+    if rng:
+        hunt["fieldConfig"]["defaults"]["min"] = rng[0]
+        hunt["fieldConfig"]["defaults"]["max"] = rng[1]
+    hunt["fieldConfig"]["overrides"] = [
+        {"matcher": {"id": "byName", "options": "Реле вентилятора (100 = включено)"},
+         "properties": [
+             {"id": "custom.axisPlacement", "value": "right"},
+             {"id": "custom.axisLabel", "value": "реле / задание, %"},
+             {"id": "min", "value": 0}, {"id": "max", "value": 100},
+             {"id": "unit", "value": "short"},
+             {"id": "custom.drawStyle", "value": "line"},
+             {"id": "custom.lineInterpolation", "value": "stepAfter"},
+             {"id": "custom.fillOpacity", "value": 25},
+             {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}},
+         ]},
+        {"matcher": {"id": "byName", "options": "Задание скорости вентилятора"},
+         "properties": [
+             {"id": "custom.axisPlacement", "value": "right"},
+             {"id": "min", "value": 0}, {"id": "max", "value": 100},
+             {"id": "unit", "value": "percent"},
+             {"id": "custom.lineInterpolation", "value": "stepAfter"},
+             {"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}},
+         ]},
+    ]
+    hunt["options"] = {
+        "legend": {"showLegend": True, "displayMode": "list", "placement": "bottom",
+                   "calcs": ["lastNotNull", "min", "max"]},
+        "tooltip": {"mode": "multi", "sort": "none"},
+    }
+    hunt["description"] = (
+        "Панель под охоту за отваливающимся датчиком температуры ОЖ. Заполняется "
+        "скриптом watch_coolant.py, который сидит в блоке двигателя и опрашивает "
+        "два запроса (21C08001 и 21CB8001) с частотой 2 Гц - обычная телеметрия "
+        "сюда не пишет, она сидит на BSI и двигатель навещает набегами.\n\n"
+        "Что искать. Событие выглядит одним из трёх способов: РАЗРЫВ в линии "
+        "температуры (значение не пришло вовсе - разрывы намеренно не сшиваются), "
+        "вертикальный скачок больше 8 °C за замер (масса антифриза так быстро "
+        "измениться не может, значит обрыв), либо уход за 60-120 °C. И почти "
+        "сразу за этим должно подняться реле вентилятора - это аварийный режим по "
+        "потерянному датчику.\n\n"
+        "Реле и задание скорости нарисованы ступенями и по правой оси: у реле "
+        "только ноль и единица, на шкале температуры они слились бы с осью."
+    )
+    panels.append(hunt)
+    pid += 1; y += 9
+
+    dtc = latest_table(pid, "Коды неисправностей двигателя, статус",
+                       [], gh=6, gy=y)
+    dtc["targets"][0]["rawSql"] = (
+        'SELECT coalesce(p.label, p.name) AS "Код и описание", l.value AS "Статус",\n'
+        '       l.ts AS "Обновлено"\n'
+        "FROM param p\n"
+        "JOIN LATERAL (SELECT value, ts FROM reading WHERE param_id = p.id\n"
+        "              ORDER BY ts DESC LIMIT 1) l ON true\n"
+        "WHERE p.name LIKE 'DTC:%'\n"
+        "ORDER BY 1"
+    )
+    dtc["description"] = (
+        "Байт статуса кода неисправности. Бит 0 - неисправность АКТИВНА сейчас, "
+        "бит 3 - подтверждена и сохранена. Момент, когда P0116 из сохранённого "
+        "становится активным, и есть искомое событие. Пишется watch_coolant.py "
+        "раз в полминуты и dtc_read.py вручную."
+    )
+    panels.append(dtc)
+    pid += 1; y += 6
+
     # Отношение обороты/скорость. Передачу BSI не отдаёт: на механике датчика
     # нет, и "положение селектора" стоит нулём во всех замерах (расшифровки в
     # базе - ASCII P/R/N/D, то есть параметр для автомата). Зато отношение
