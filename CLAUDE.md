@@ -607,6 +607,41 @@ This car's own codes decode without any dictionary: `0116` -> **P0116** (coolant
 temperature circuit) and `2299` -> **P2299** (brake pedal / accelerator pedal position
 incompatible). The second one had been printed as raw hex for days before being decoded.
 
+## The coolant sensor caught lying (2026-08-31)
+
+Settled with a measurement instead of inference. `watch_coolant.py` camped in the engine
+block at 2 Hz for 20 minutes on a live drive and caught the dropout in full resolution:
+
+    21:21:20 .. 21:21:31   93 C, fan setpoint 29-30 %, relay 1, ~3000 rpm   (11 s flat)
+    21:21:31               108 C          <- +15 C in ONE 0.5 s sample
+    21:21:32               103 C, fan setpoint 29 % -> 100 %
+    21:21:33               101 C
+    21:21:34               93 C           <- back
+    21:21:34 onward        fan setpoint stays 100 %
+
+Both directions are physically impossible: a coolant mass cannot gain 15 C in half a second
+nor lose it in three. So this is the sensor, not the engine - and the ECU believed it and
+slammed the fan to full. That is the mechanism behind "the fan briefly spun up" that had
+resisted explanation for weeks: the sensor spikes, the ECU panics, the fan goes to 100 %,
+the reading returns and the fan stays up for a while.
+
+Nine earlier readings had all looked plausible because they were single samples minutes
+apart. The event lasts about three seconds, so only a fast continuous stream could see it.
+
+**The fan is speed-controlled, not just a relay.** `MP_CONSIGNE_VITESSE_GMV_C5` tracks
+coolant temperature monotonically - 17 % at 53 C, 22 % at 70, 27 % at 85, 30 % at 93 - and
+goes to 100 % on demand. So the signal to watch is the setpoint, not
+`MP_ETAT_RELAIS_GMV`; the relay was already 1 throughout normal running.
+
+Two technical facts confirmed by the same run:
+
+* **`21CB8001` answers with the engine running.** It had been on the hand-measured
+  non-answering list; the silence was a property of state, exactly as the note above warns.
+  All four fan parameters read fine.
+* **Camping in one block never wedges the interface.** 2400 samples, 20 minutes, clean exit.
+  The failure mode was always block *switching* without session teardown, so a tool that
+  enters once and stays is safe by construction.
+
 ## Coolant sensor: what is and is not available
 
 Nine readings of `MP_TEMPERATURE_D_EAU_MOTEUR_d` collected across two days: 85 °C right
