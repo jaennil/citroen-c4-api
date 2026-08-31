@@ -43,7 +43,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 ENGINE = (0x6A8, 0x688)
+# По умолчанию охота за датчиком ОЖ: температура и вентилятор.
 REQS = ["21C08001", "21CB8001"]
+# Педали и выключатель стоп-сигнала - для P2299. Отдельным набором, потому что
+# лишние запросы замедляют цикл, а на охоте за ОЖ важна частота.
+REQS_PEDALS = ["21CA8001", "21C08001"]
 
 COOLANT = "MP_TEMPERATURE_D_EAU_MOTEUR_d"
 FAN_RELAY = "MP_ETAT_RELAIS_GMV"
@@ -85,14 +89,23 @@ def main():
                     help="как часто читать коды неисправностей, с; 0 - не читать")
     ap.add_argument("--minutes", type=float, default=0,
                     help="остановиться через N минут (0 - до Ctrl+C)")
+    ap.add_argument("--pedals", action="store_true",
+                    help="смотреть педали и выключатель стоп-сигнала (для P2299)")
+    ap.add_argument("--reqs", help="свой список запросов через запятую")
     args = ap.parse_args()
 
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
 
-    info, by_req = params_for(REQS)
+    reqs = REQS
+    if args.pedals:
+        reqs = REQS_PEDALS
+    if args.reqs:
+        reqs = [r.strip().upper() for r in args.reqs.split(",") if r.strip()]
+    info, by_req = params_for(reqs)
     total = sum(len(v) for v in by_req.values())
-    log.info(f"двигатель {info['fam']}: {total} параметров из {len(REQS)} запросов")
+    log.info(f"двигатель {info['fam']}: {total} параметров из {len(reqs)} запросов: "
+             + ", ".join(reqs))
 
     store = None
     if args.sqlite:
