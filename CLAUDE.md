@@ -552,8 +552,16 @@ The four other real bugs found on the way, all of which also had to be fixed:
 requests "don't answer" and skip them made things worse: the same ABS requests returned
 18 parameters in one run and nothing in the next, and the learned list then poisoned the
 working ones. `dead_requests.json` is kept, but only for what was measured by hand -
-the engine's eight non-answering requests, which cut its read from 11.3 s to 1.6 s for
+the engine's non-answering requests, which cut its read from 11.3 s to 1.6 s for
 51 parameters.
+
+`21CB8001` was taken back off that list on 2026-08-31. It is the only request that carries
+the cooling-fan state - `MP_ETAT_RELAIS_GMV`, `MP_ETAT_GMV_PTIT_C5`,
+`MP_CONSIGNE_VITESSE_GMV_C5`, `MP_ETAT_REL_GMV_C5` - and it was measured silent in a state
+that may well have been engine-off, which is exactly the trap recorded above. Since the fan is
+what the stored P0116 is suspected to be driving, one retry with the engine running is worth
+1.4 s per excursion. If it answers, fan state and coolant temperature (`21C08001` byte 6,
+offset -50) arrive together and the sensor question can finally be settled.
 
 Two operational rules that saved a lot of replugs:
 
