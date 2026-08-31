@@ -497,6 +497,14 @@ MNEMO = {
     "MP_RCO_ELECTROVANNE_DEPHASEUR_ACC_1": "Клапан фазовращателя, скважность",
     "MP_ETAT_COH_POSITION_AAC_ADMI_VIL": "Согласованность распредвала с коленвалом",
 
+    # --- двигатель: вентилятор охлаждения ------------------------------------
+    "MP_ETAT_RELAIS_GMV": "Реле вентилятора охлаждения",
+    "MP_ETAT_REL_GMV_C5": "Реле вентилятора, состояние входа",
+    "MP_ETAT_GMV_PTIT_C5": "Вентилятор, малая скорость",
+    "MP_CONSIGNE_VITESSE_GMV_C5": "Задание скорости вентилятора",
+    "MP_ETAT_ENTREE_ETAT_GMV": "Вход состояния вентилятора",
+    "MP_TEMPERATURE_AIR_EXTERIEUR": "Наружный воздух (по блоку двигателя)",
+
     # --- двигатель: прочее ---------------------------------------------------
     "MP_TEMPERATURE_D_EAU_MOTEUR_D": "Температура охлаждающей жидкости",
     "MP_TENSION_ALIMENTATION_CALCULATEUR_CONTROLE_MOTEUR": "Питание блока двигателя",
