@@ -50,9 +50,13 @@ FAN_RELAY = "MP_ETAT_RELAIS_GMV"
 FAN_SPEED = "MP_CONSIGNE_VITESSE_GMV_C5"
 RPM = "MP_REGIME_MOTEUR"
 
-# Разумный коридор для прогретого двигателя. Выход за него - либо настоящий
-# перегрев, либо подстановка аварийного значения вместо пропавшего датчика.
-PLAUSIBLE = (60.0, 120.0)
+# Коридор ПРОГРЕТОГО двигателя. Применять его с холодного пуска нельзя: на
+# первом же прогоне детектор орал дважды в секунду на честных 53 °C, потому что
+# двигатель просто ещё не прогрелся. Поэтому коридор включается только после
+# того, как ОЖ хоть раз перевалила за WARM - до этого работают правила
+# "нет значения" и "скачок", которые от температуры не зависят.
+PLAUSIBLE = (70.0, 120.0)
+WARM = 80.0
 # Скачок между соседними замерами, который физически невозможен: масса антифриза
 # так быстро остыть или нагреться не может, значит это обрыв.
 JUMP = 8.0
@@ -112,6 +116,7 @@ def main():
         deadline = time.time() + args.minutes * 60 if args.minutes else None
         last_dtc = 0.0
         prev_coolant = None
+        warmed = False
         n = 0
         events = 0
 
@@ -145,13 +150,16 @@ def main():
                 rp = vals.get(RPM, (None,))[0]
 
                 # то самое событие: показание ушло
+                if c is not None and c >= WARM:
+                    warmed = True
+
                 why = None
                 if c is None:
                     why = "датчик не отдал значение вовсе"
-                elif not (PLAUSIBLE[0] <= c <= PLAUSIBLE[1]):
-                    why = f"значение вне коридора: {c:.0f} °C"
                 elif prev_coolant is not None and abs(c - prev_coolant) >= JUMP:
                     why = f"скачок {prev_coolant:.0f} -> {c:.0f} °C за один замер"
+                elif warmed and not (PLAUSIBLE[0] <= c <= PLAUSIBLE[1]):
+                    why = f"прогретый двигатель, а значение {c:.0f} °C"
                 if why:
                     events += 1
                     log.warning(f"*** ДТОЖ: {why}   вентилятор реле={fr} задание={fs} "
