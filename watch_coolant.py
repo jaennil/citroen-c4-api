@@ -92,6 +92,9 @@ def main():
     ap.add_argument("--pedals", action="store_true",
                     help="смотреть педали и выключатель стоп-сигнала (для P2299)")
     ap.add_argument("--reqs", help="свой список запросов через запятую")
+    ap.add_argument("--once", action="store_true",
+                    help="прочитать запросы ОДИН раз и напечатать все значения. "
+                         "Для идентификации: номер и версия ПО, число прошивок")
     args = ap.parse_args()
 
     signal.signal(signal.SIGINT, _on_signal)
@@ -124,6 +127,37 @@ def main():
         enter(lex, *ENGINE)
         entered = True
         log.info("вошли в блок двигателя и больше никуда не переключаемся")
+
+        if args.once:
+            # Разовое чтение с печатью всего, что расшифровалось. Нужно для
+            # опознания блока: ID_NOMBRE_DE_TELECHARGEMENT говорит, сколько раз
+            # в него грузили ПО, а ID_REFERENCE_LOGICIEL - номер прошивки.
+            total_read = 0
+            for req, ps in by_req.items():
+                if not ps:
+                    continue
+                try:
+                    payload, _ = lex.read(bytes.fromhex(req))
+                except Exception as e:
+                    print(f"{req}: сорвался ({type(e).__name__})")
+                    continue
+                if not payload:
+                    print(f"{req}: промолчал")
+                    continue
+                if payload[0] == 0x7F:
+                    print(f"{req}: отказ NRC {payload[2]:02X}")
+                    continue
+                print(f"\n=== {req}: ответ {len(payload)} байт ===")
+                print(f"    сырое: {payload.hex()}")
+                for p in ps:
+                    v = decode(p, payload)
+                    if v is not None:
+                        print(f"    {p['name'][:52]:<54} {v:g} {p['unit']}")
+                        total_read += 1
+                        if store:
+                            store.write([(0, f"{info['fam']}:{p['name']}", p['unit'], v)])
+            print(f"\nрасшифровано значений: {total_read}")
+            return 0
 
         period = 1.0 / max(args.hz, 0.1)
         deadline = time.time() + args.minutes * 60 if args.minutes else None
