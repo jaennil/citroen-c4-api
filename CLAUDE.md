@@ -709,6 +709,26 @@ the reading returns and the fan stays up for a while.
 Nine earlier readings had all looked plausible because they were single samples minutes
 apart. The event lasts about three seconds, so only a fast continuous stream could see it.
 
+**It repeats, and it clusters under load.** A second run on 2026-09-01 caught five events in
+a twenty-second window, all between 2200 and 2700 rpm:
+
+    11:13:00   91 -> 113 C, and straight back 113 -> 91
+    11:13:06   92 -> 111 C
+    11:13:08  103 -> 92 C
+    11:13:17   93 -> 103 C
+
+One event in twenty minutes yesterday, five in four minutes today. Both sessions put the
+spikes at 2200-3000 rpm under load, which is the useful hint for anyone doing a wiggle test
+on the connector.
+
+**Refinement of the mechanism.** The spikes go up, to 103-113 C, never down. For an NTC
+sensor a rising reading means falling resistance, while a bad connection would read open
+circuit and therefore very cold. So this is probably not the raw sensor value at all: it
+looks like the ECU detecting an implausible reading and substituting its fail-safe value -
+deliberately hot, so the fan runs - for a sample or two before returning to the real one.
+Either way the conclusion is the same: the circuit drops out intermittently and the ECU
+reacts by commanding full fan.
+
 **The fan is speed-controlled, not just a relay.** `MP_CONSIGNE_VITESSE_GMV_C5` tracks
 coolant temperature monotonically - 17 % at 53 C, 22 % at 70, 27 % at 85, 30 % at 93 - and
 goes to 100 % on demand. So the signal to watch is the setpoint, not
