@@ -607,6 +607,37 @@ This car's own codes decode without any dictionary: `0116` -> **P0116** (coolant
 temperature circuit) and `2299` -> **P2299** (brake pedal / accelerator pedal position
 incompatible). The second one had been printed as raw hex for days before being decoded.
 
+## Codes across the blocks, first sweep (2026-09-01)
+
+Five blocks read before the interface degraded. Results are valid:
+
+| block | codes |
+|---|---|
+| `0x6A8` engine | P0116 and P2299, both status `01` - active |
+| `0x6AD` ABS/ESP | none |
+| `0x6C8` VCI | none |
+| `0x730` rain/light sensor | none |
+| `0x6B5` electric steering pump (GEP) | **C1205, status `0x28`** |
+
+`C1205` is new. Status `0x28` has bit 3 set and bit 0 clear, i.e. **confirmed and stored but
+not active now** - a historical fault, and the steering works. The code is not in the 54
+descriptions extracted from the image and not in the DTC catalogue clone, so it stays a bare
+PSA code for now.
+
+Still unread: BSI, BSM, stalk, cluster, airbag, parking sensors, door module, control panel.
+
+**Why it died, and it was our own bug.** `poll_all.py` has `SKIP_BLOCKS = {0x6C8}` because
+VCI reproducibly poisons the interface; `dtc_read.py` walked `sorted(ECUS)` with no skip.
+The collapse began exactly one block after VCI - nine consecutive `USBTimeoutError` - which
+matches the note above about VCI answering with 24 silent requests in a row. `dtc_read` now
+imports `SKIP_BLOCKS` from `poll_all` so there is one list, not two. **The fix is not yet
+verified on hardware.**
+
+**And a rule worth keeping: exit code 0 does not mean the interface is healthy.** That sweep
+finished with status 0 while leaving the device in a state where the very next
+`device_boot()` failed on a USB write. Judge health by whether reads succeed, not by the
+process exit code.
+
 ## P2299 is the driver, not a fault (2026-09-01)
 
 The owner had been practising heel-and-toe downshifts and left-foot braking. P2299 is
