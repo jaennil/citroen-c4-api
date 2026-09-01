@@ -607,6 +607,30 @@ This car's own codes decode without any dictionary: `0116` -> **P0116** (coolant
 temperature circuit) and `2299` -> **P2299** (brake pedal / accelerator pedal position
 incompatible). The second one had been printed as raw hex for days before being decoded.
 
+## P2299 is the driver, not a fault (2026-09-01)
+
+The owner had been practising heel-and-toe downshifts and left-foot braking. P2299 is
+"brake pedal position / accelerator pedal position incompatible", so that technique is
+literally the condition the code detects. Measured over four minutes of ordinary city
+driving, reading `21CA8001` at 2 Hz:
+
+* `MP_ETAT_CONTACTEUR_PEDALE_FREIN` toggles properly - 13 transitions, 7 pressed runs,
+  pressed 40 % of the time, longest run 62 s (a traffic light). Not stuck.
+* **Brake pressed AND throttle above 5 %: zero samples.** This is the discriminating test.
+  A stuck switch would put every throttle application into that bucket.
+* The two accelerator channels agree: no discrepancy above 15 % in 460 samples, channel
+  ratio 0.96 (spread 0.85-0.98).
+
+So the pedal hardware is healthy and the brake light switch does not need replacing. The
+code comes from real simultaneous pedal input. Two consequences worth keeping: **left-foot
+braking does not work as intended on this car** - the ECU cuts torque when it sees both
+pedals, so the technique trains against the electronics rather than the car; and the code
+will keep returning while the practice continues. Clearing it and driving normally is the
+confirmation, and that is still an unperformed write to the ECU.
+
+Caveat: four minutes only proves the switch is not permanently stuck. An intermittent
+fault could still hide, though the healthy channel pair makes that unlikely.
+
 ## The engine's fuel loop, read on 2026-09-01
 
 **The downstream oxygen loop is switched off in software.** `MP_ETAT_REGULATION_SONDE_A_OXYGENE_AVAL`
