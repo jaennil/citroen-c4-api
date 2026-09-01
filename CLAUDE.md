@@ -607,6 +607,31 @@ This car's own codes decode without any dictionary: `0116` -> **P0116** (coolant
 temperature circuit) and `2299` -> **P2299** (brake pedal / accelerator pedal position
 incompatible). The second one had been printed as raw hex for days before being decoded.
 
+## Car configuration that changes how readings are judged
+
+Two modifications, both established from the owner plus our own data, and both of which
+invalidate textbook norms:
+
+* **Retrofit xenon in the dipped beam**, fitted as a kit, not factory. No auto-levelling.
+  This is why the BSI reports itself as a plain halogen car and why `D82B` (main beam
+  actuator) does not exist: the BSI is genuinely a non-AFS variant and knows nothing about
+  the xenon, which sits in the same holder on the same circuit.
+* **Catalytic converter removed.** Measured consequence: the downstream oxygen sensor
+  (`MP_TENSION_SONDE_A_OXYGENE_AVAL`) swings 0-900 mV exactly like the upstream one,
+  because it now sits in open pipe and sees raw exhaust. The textbook rule for that
+  sensor - a flat 550-800 mV shelf - applies only to a car with a working cat, so the
+  threshold lines were removed from its panel; leaving them would have painted normal
+  behaviour as a fault forever. What the sensor is still good for: with no cat it is a
+  second copy of the upstream sensor, so comparing the two catches a dying one - if one
+  swings and the other sits flat, the flat one is dead.
+
+**And a deduction worth keeping: there is no P0420.** A removed cat with a live downstream
+sensor mirroring the upstream one is exactly what triggers P0420 (catalyst efficiency below
+threshold). Twenty minutes of continuous DTC polling on 2026-08-31 returned only P0116 and
+P2299, never P0420. So either the ECU has been reflashed to drop the catalyst monitor, or
+that monitor never completes its readiness cycle. Assume the firmware is not stock before
+anyone "updates" or resets the engine ECU.
+
 ## The coolant sensor caught lying (2026-08-31)
 
 Settled with a measurement instead of inference. `watch_coolant.py` camped in the engine
