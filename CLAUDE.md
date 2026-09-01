@@ -607,6 +607,38 @@ This car's own codes decode without any dictionary: `0116` -> **P0116** (coolant
 temperature circuit) and `2299` -> **P2299** (brake pedal / accelerator pedal position
 incompatible). The second one had been printed as raw hex for days before being decoded.
 
+## The engine's fuel loop, read on 2026-09-01
+
+**The downstream oxygen loop is switched off in software.** `MP_ETAT_REGULATION_SONDE_A_OXYGENE_AVAL`
+read 0 in all 1864 warm samples of the 20-minute run and again on a fresh single read, while
+`..._AMONT` toggles 0/1. The sensor itself is alive - its voltage swings 0-898 mV and
+`MP_RCOAVAL` is computed and varies 0-94 - so the ECU reads it and refuses to use it. That
+is the signature of the "Euro-2" reflash, and it fits the absence of P0420 with no cat.
+
+**The ECU mirrors the upstream correction into the downstream field.** Both
+`MP_FACTEUR_CORRECTION_RICHESSE_AMONT` (sb 47) and `_AVAL` (sb 51) came back as the same
+bytes `8192` in the raw payload. The offsets do not overlap - 46 and 50 - so this is the
+block duplicating a value, not a catalogue error. An earlier note here blamed a catalogue
+offset; that was wrong.
+
+**And the unit in the DiagBox DB lies, the way endianness already did.** That parameter is
+`factor 7.63e-06, offset -0.25`, so its full span is -0.25 .. +0.25 with unit `%`. A fuel
+trim of a quarter of a percent is meaningless; read as a **fraction** it is +/-25 %, which is
+exactly the normal full range. So multiply by 100 to get percent. The observed -0.16 .. +0.14
+is therefore -16 % .. +14 %, and the current warm-idle reading of 0.0031 is 0.3 %, i.e. no
+correction at all.
+
+## Two ways this tooling wedges the interface, both mine
+
+* **Back-to-back `with-lexia.sh` runs.** The wrapper clears the pause flag on exit, the
+  service grabs the device immediately, and a second invocation lands on top of that
+  acquisition. Same race as the udev one. Hit three times in one session; 5-8 s of sleep is
+  not enough. Fixed by `--keep`, which leaves the flag up for a series, plus `--release` to
+  hand the device back.
+* **A single read right after entering a block.** The first read returns an empty receipt,
+  not data, so `--once` reported `21C08001` silent while the same request answered 2400 times
+  in the continuous run. `watch_coolant.py --once` now retries up to three times.
+
 ## Car configuration that changes how readings are judged
 
 Two modifications, both established from the owner plus our own data, and both of which
