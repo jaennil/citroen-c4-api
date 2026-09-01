@@ -39,6 +39,7 @@ import time
 
 from ecu import enter, is_kwp
 from ecu_catalog import ECUS
+from poll_all import SKIP_BLOCKS
 from lexia_proto import Lexia
 
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -162,7 +163,12 @@ def main():
     ap.add_argument("--sqlite", help="записать найденные коды в базу телеметрии")
     args = ap.parse_args()
 
-    targets = sorted(ECUS)
+    # Пропускать те же блоки, что и poll_all - список один, чтобы не разъезжался.
+    # Проверено 01.09.2026: без пропуска VCI (0x6C8) обход умирает. Прочитались
+    # пять блоков, потом девять подряд отвалились по USBTimeoutError, и коллапс
+    # начался ровно через один блок после VCI - в точности как описано выше про
+    # 24 молчащих запроса подряд.
+    targets = [k for k in sorted(ECUS) if k[0] not in SKIP_BLOCKS]
     if args.tx:
         want = int(args.tx, 16)
         targets = [k for k in targets if k[0] == want]
