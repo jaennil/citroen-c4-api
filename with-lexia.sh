@@ -11,6 +11,18 @@
 # Здесь порядок правильный и его не надо помнить: поставить флаг, ДОЖДАТЬСЯ
 # фактического освобождения, выполнить команду, снять флаг на любом выходе.
 #
+# ВАЖНО про несколько команд подряд. Снимая флаг на выходе, скрипт отпускает
+# службу, и та хватает устройство немедленно. Если тут же запустить второй
+# with-lexia.sh, он влезает службе под руку - тот же самый механизм драки за
+# захват, и результат тот же: I/O error и перетык руками. Наступал на это трижды
+# за один сеанс, паузы в 5-8 секунд НЕ хватает.
+#
+# Поэтому для серии команд флаг надо держать поднятым:
+#
+#     ./with-lexia.sh --keep ./.venv/bin/python watch_coolant.py --once ...
+#     ./with-lexia.sh --keep ./.venv/bin/python watch_coolant.py --pedals ...
+#     ./with-lexia.sh --release          # вернуть устройство сбору
+#
 #     ./with-lexia.sh ./.venv/bin/python ecu.py --tx 6A8
 #     ./with-lexia.sh ./.venv/bin/python poll_all.py --tx 6A8
 set -uo pipefail
@@ -18,10 +30,20 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLAG="$HOME/.config/c4-can/pause"
 WAIT="${LEXIA_WAIT:-30}"
 
-[ $# -gt 0 ] || { echo "нечего запускать: ./with-lexia.sh <команда...>"; exit 2; }
+KEEP=0
+if [ "${1:-}" = "--keep" ]; then KEEP=1; shift; fi
+if [ "${1:-}" = "--release" ]; then
+  rm -f "$FLAG"
+  echo "флаг паузы снят, устройство возвращено сбору"
+  exit 0
+fi
+
+[ $# -gt 0 ] || { echo "нечего запускать: ./with-lexia.sh [--keep] <команда...>"; exit 2; }
 
 mkdir -p "$(dirname "$FLAG")"
-cleanup() { rm -f "$FLAG"; }
+# С --keep флаг НЕ снимается: следующая команда серии заходит на уже
+# припаркованную службу, и драки за захват не возникает.
+cleanup() { [ "$KEEP" = 1 ] || rm -f "$FLAG"; }
 trap cleanup EXIT INT TERM
 touch "$FLAG"
 
@@ -66,4 +88,5 @@ cd "$HERE" || exit 1
 "$@"
 rc=$?
 echo "--- код возврата: $rc ---"
+[ "$KEEP" = 1 ] && echo "флаг паузы ОСТАВЛЕН. Вернуть сбору: ./with-lexia.sh --release"
 exit $rc

@@ -136,13 +136,26 @@ def main():
             for req, ps in by_req.items():
                 if not ps:
                     continue
-                try:
-                    payload, _ = lex.read(bytes.fromhex(req))
-                except Exception as e:
-                    print(f"{req}: сорвался ({type(e).__name__})")
-                    continue
+                # Первое чтение после входа в блок отдаёт пустую квитанцию, а не
+                # данные - это записано в CLAUDE.md. В непрерывном режиме промах
+                # исправляет следующая итерация, а здесь чтение одно, поэтому
+                # повторяем сами. Измерено: 21C08001 в --once молчал, хотя в
+                # 20-минутном прогоне отвечал всегда.
+                payload = None
+                for attempt in range(3):
+                    try:
+                        payload, _ = lex.read(bytes.fromhex(req))
+                    except Exception as e:
+                        print(f"{req}: сорвался ({type(e).__name__})")
+                        payload = None
+                        break
+                    if payload:
+                        if attempt:
+                            print(f"{req}: ответил с попытки {attempt + 1}")
+                        break
+                    time.sleep(0.3)
                 if not payload:
-                    print(f"{req}: промолчал")
+                    print(f"{req}: промолчал после трёх попыток")
                     continue
                 if payload[0] == 0x7F:
                     print(f"{req}: отказ NRC {payload[2]:02X}")
