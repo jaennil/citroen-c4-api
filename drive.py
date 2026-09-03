@@ -168,14 +168,35 @@ def main():
     # --quick-every 60, и лучше при наблюдении за журналом.
     ap.add_argument("--quick-every", type=float, default=0.0,
                     help="как часто делать лёгкий замер (см. QUICK), с; 0 - выключено")
+    # Ручной прогон под with-lexia.sh. Тот ставит флаг паузы, чтобы СЛУЖБА
+    # отпустила устройство, - но drive.py видит тот же флаг и парковался сам,
+    # так что проверить вылазку вручную было нельзя. С этим флагом ручной
+    # экземпляр флаг игнорирует и работает, а служба остаётся припаркованной.
+    ap.add_argument("--ignore-pause", action="store_true",
+                    help="не парковаться по флагу паузы (для ручного прогона под with-lexia.sh)")
     ap.add_argument("--exit-after-idle", type=float, default=0,
                     help="выйти, если устройства нет столько секунд (0 - ждать вечно). "
                          "Нужно для автозапуска по udev: вынул Lexia - служба сама завершилась")
     args = ap.parse_args()
 
+    def pause_requested():
+        return (not args.ignore_pause) and os.path.exists(PAUSE_FLAG)
+
+    # force=True обязателен, и без него --log молча не работал.
+    #
+    # drive.py импортирует ecu, poll_all, telemetry и sync, а каждый из них зовёт
+    # logging.basicConfig на уровне модуля - так сделано во всех скриптах проекта.
+    # Первый же импорт ставит корневому логгеру StreamHandler, после чего наш
+    # basicConfig(handlers=[FileHandler, StreamHandler]) становится пустышкой:
+    # basicConfig без force ничего не делает, если обработчики уже есть.
+    # Ошибки при этом нет, вывод идёт в консоль в нужном формате, и всё выглядит
+    # рабочим - а файл, указанный в --log, остаётся нулевого размера. Именно
+    # поэтому drive.log лежал пустой с 16 августа, и журнал службы приходилось
+    # читать через journalctl.
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.FileHandler(args.log), logging.StreamHandler()])
+        handlers=[logging.FileHandler(args.log), logging.StreamHandler()],
+        force=True)
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
 
@@ -226,7 +247,7 @@ def main():
 
     paused = False
     while not _stop:
-        if os.path.exists(PAUSE_FLAG):
+        if pause_requested():
             if not paused:
                 log.info(f"пауза: есть файл {PAUSE_FLAG}, освобождаю USB и жду")
                 if lex:
@@ -291,7 +312,7 @@ def main():
         # самого потока, а данные двигателя того стоят.
         # Лёгкий замер: дешёвый, поэтому часто. Идёт раньше полной вылазки, чтобы
         # не ждать её очереди.
-        if (args.quick_every and QUICK and not os.path.exists(PAUSE_FLAG)
+        if (args.quick_every and QUICK and not pause_requested()
                 and t0 - last_quick >= args.quick_every):
             last_quick = t0
             for tx, rx in extra:
@@ -330,7 +351,7 @@ def main():
         # Проверка флага ещё и здесь: вылазка занимает до 15 с, и если начать её
         # с уже поставленным флагом, тот, кто просит USB, будет ждать всю вылазку.
         if (args.ecu_every and extra and t0 - last_ecu >= args.ecu_every
-                and not os.path.exists(PAUSE_FLAG)):
+                and not pause_requested()):
             last_ecu = t0
             # По ОДНОМУ блоку за вылазку, по кругу. Обойти все тринадцать за раз -
             # это минуты, в которые не идёт ничего другого. Частоту отдельного
