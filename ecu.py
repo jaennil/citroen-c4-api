@@ -69,7 +69,27 @@ _current = None
 # после этого повторяет то, что в записи реально есть. Сами последовательности
 # входа BSI и BSM структурно одинаковы (дескриптор, таблица, 10 03), различаются
 # только адресом в таблице, так что дело не в них, а в контексте перехода.
-KWP_EXIT_HOP = (0x747, 0x647)
+# Промежуточный блок зависит от того, ИЗ КАКОГО KWP-блока уходим. В записи
+# DiagBox все три перехода KWP -> UDS перечислены ниже, и других нет:
+#
+#     0x6A8 (двигатель) -> 0x6C1      финальная команда входа 10 C0
+#     0x6AD (ABS)       -> 0x747      финальная команда входа 10 03
+#     0x6B7             -> 0x747      финальная команда входа 10 03
+#
+# Разное 10 C0 против 10 03 и есть доказательство, что последовательность входа
+# зависит от контекста перехода, а не только от адреса цели. Первая попытка
+# уводила двигатель через 0x747 - то есть по маршруту, записанному для ABS, - и
+# канал рушился на самом прыжке: USBTimeoutError через 13 с, дальше Errno 5 и
+# перетык руками. Измерено 2026-09-03.
+KWP_EXIT_HOP = {
+    (0x6A8, 0x688): (0x6C1, 0x601),
+}
+KWP_EXIT_HOP_DEFAULT = (0x747, 0x647)
+
+
+def exit_hop(key):
+    """Через какой UDS-блок уходить из KWP-блока key."""
+    return KWP_EXIT_HOP.get(key, KWP_EXIT_HOP_DEFAULT)
 
 
 
@@ -109,10 +129,11 @@ def enter(lex, tx, rx, verbose=False, _hop=False):
     key = (tx, rx)
     if key not in ENTRY:
         raise KeyError(f"нет записанной последовательности для 0x{tx:03X}")
-    if (not _hop and _current is not None and is_kwp(_current)
-            and not is_kwp(key) and key != KWP_EXIT_HOP):
-        log.info(f"возврат с KWP 0x{_current[0]:03X} через 0x{KWP_EXIT_HOP[0]:03X}")
-        enter(lex, *KWP_EXIT_HOP, verbose=verbose, _hop=True)
+    if not _hop and _current is not None and is_kwp(_current) and not is_kwp(key):
+        hop = exit_hop(_current)
+        if key != hop:
+            log.info(f"возврат с KWP 0x{_current[0]:03X} через 0x{hop[0]:03X}")
+            enter(lex, *hop, verbose=verbose, _hop=True)
     leave(lex)          # сперва закрыть предыдущую сессию, как делает DiagBox
     last = None
     for i, g in enumerate(groups(ENTRY[key]), 1):
