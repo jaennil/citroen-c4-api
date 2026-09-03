@@ -818,3 +818,60 @@ file has it, which is why the label "Voltage of the coolant temperature sensor" 
 present in the image yet unreadable here. Lambda voltages, by contrast, are available and
 read 112 and 102 mV. Catching an open circuit therefore needs a multimeter at the sensor
 connector, not diagnostics.
+
+## Why block switching died: one ack per packet, not per reply (2026-09-03)
+
+Three hypotheses were wrong before the capture settled it, and each looked convincing.
+Recorded so they are not retried.
+
+**The cause: a multi-packet reply needs one `064409` acknowledgement per packet.** We sent
+exactly one per reply. Measured by capturing our own failing return (`capture-return.sh` ->
+`return.log`) and diffing against the DiagBox recording:
+
+    мы:      после многопакетного ответа 064409 РОВНО ОДИН РАЗ - 23 случая из 23
+    DiagBox: 064409 по нескольку подряд - два, три, четыре - 7 случаев из 25
+
+The engine answers `21 C0 80 01` with 252 bytes, i.e. four 64-byte packets. We fetched all
+four, acked once, and the device kept the rest unacknowledged. From that moment **every**
+command was refused with `15 40 09 E9`, and every fetch returned the *same stale reply* -
+in the dump it repeats eight times in a row, byte for byte. Hence the constant 13 s to
+`USBTimeoutError`, identical for every return route, and `Errno 5` afterwards.
+
+It also explains why camping in one block looked safe: a stale reply to the same request
+looks plausible, so only the *switching* commands visibly broke. Any long `watch_coolant.py`
+run may therefore contain repeated identical samples that were never fresh - worth checking
+before trusting a flat stretch in that data.
+
+Fixed in `Lexia._collect`: ack once per packet received. **Not yet verified on the car.**
+
+### The three wrong answers
+
+* **"The excursion was never tested."** It had been, three times, and it failed. The stale
+  note in this file said otherwise; both excursion flags were already defaulted to 0.
+* **"KWP -> BSI is a transition DiagBox never performs."** True but irrelevant. The capture
+  holds 76 switches - 45 UDS->UDS, 24 KWP->KWP, 3 UDS->KWP, 3 KWP->UDS - and every entry
+  into `0x752` came from a UDS block. Routing the return through `0x747` (DiagBox's recorded
+  exit from ABS) changed nothing: same 13 s, same timeout.
+* **"The exit hop must match the source block."** Also true and also irrelevant. Leaving the
+  engine, DiagBox goes to `0x6C1` and its entry ends `10 C0`, where `0x747` and `0x752` end
+  `10 03` - so entry sequences really do depend on the transition context. Routing through
+  `0x6C1` still failed at 13 s. **Identical timing across three different routes is what
+  finally pointed away from routing altogether.** `ecu.KWP_EXIT_HOP` is kept but empty.
+* **"You must not leave a block right after unanswered requests."** Disproved by the
+  capture: DiagBox leaves the engine immediately after two `7F 21 12` refusals to
+  `21 87 00` and `21 87 01`.
+
+### Two operational notes from the same session
+
+* **`--log` was silently dead.** `ecu.py`, `poll_all.py`, `telemetry.py` and some twenty
+  other scripts call `logging.basicConfig` at module level; the first import claims the root
+  logger, so `drive.py`'s own `basicConfig(handlers=[FileHandler, ...])` became a no-op. No
+  error, console output correctly formatted, and the file left at zero bytes - which is why
+  `drive.log` had been empty since 16 August and the journal had to be read through
+  `journalctl`. Fixed with `force=True`.
+* **Never let a tool timeout kill a run mid-transaction.** A `SIGKILL` at 120 s left the
+  interface half-done and wedged it exactly as a failed excursion does. Run manual
+  collections in the background with `timeout --signal=TERM`, which `drive.py` handles
+  cleanly.
+* `drive.py --ignore-pause` exists so a manual run can coexist with `with-lexia.sh`, which
+  raises the pause flag for the *service* - without it the manual instance parked itself too.
