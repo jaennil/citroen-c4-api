@@ -875,3 +875,28 @@ Fixed in `Lexia._collect`: ack once per packet received. **Not yet verified on t
   cleanly.
 * `drive.py --ignore-pause` exists so a manual run can coexist with `with-lexia.sh`, which
   raises the pause flag for the *service* - without it the manual instance parked itself too.
+
+### `Errno 110` is a third wedged state, and it is not the ignition
+
+Seen repeatedly on 2026-09-03 while trying to verify the ack fix. Distinguish the three:
+
+    Errno 5   Input/Output Error    захват проходит, инициализация нет - классическое залипание
+    Errno 16  Resource busy         два наших процесса дерутся за устройство, всегда наша ошибка
+    Errno 110 Operation timed out   USB жив, а связь С МАШИНОЙ не поднимается
+
+`Errno 110` first looked like "the ignition is off", and the owner had indeed switched it
+off - but it kept coming with the ignition back **on**, and `reset_lexia.py` reported
+"устройство отвечает - сброс шины не потребовался" while the link still refused to come up.
+So release+dispose revives the USB endpoint but not the session with the car: a physical
+replug is still required.
+
+What produced it: taking the device away from a **live service session** through
+`with-lexia.sh`. The service disconnects on the pause flag mid-session, and the next cold
+`fe` frame from our own process times out. The safe order for a manual run is therefore
+flag up -> **replug** -> run, not flag up -> run against a session the service just
+abandoned.
+
+Two small traps from the same evening: `pgrep -cf 'drive.py'` counts the service's own
+instance *and* the shell running the grep - match on `--ignore-pause` and use
+`grep "[d]rive.py"` to see only manual runs. And `pkill` returning 1 when nothing matched
+aborts an `&&` chain, so cleanup steps after it silently do not run.
