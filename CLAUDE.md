@@ -492,9 +492,38 @@ row, 189 engine names produced 189 distinct rows, no duplicate DIDs, and the ids
 stable across a restart. Non-BSI names carry the block's family as a prefix
 (`MEV17_4_2:MP_...`) precisely so two blocks cannot merge on a shared mnemonic.
 
-Untested: the excursion itself has never completed against the car - the Lexia was
-unplugged first. Next session, run `drive.py --ecu-every 15` against a copy of `car.db` and
-confirm engine rows appear before letting the service do it.
+**The excursion has since been tested on the car and it fails, so both excursion flags
+default to 0 and the service reads the BSI alone.** This paragraph used to say the
+excursion was merely untested; that is wrong. Measured three times: 30-60 s after the
+engine sweep begins, `USBTimeoutError` arrives and the device then answers
+`USBError [Errno 5]` to everything until the connector is pulled. A *light* excursion
+(`--quick-every`) fails the same way, so it is off too. The failure is always in the same
+place - **the return to the BSI after a KWP block**, which is why that branch in `drive.py`
+logs loudly instead of failing silently.
+
+Consequence worth knowing: every engine row in `car.db` (128 634 readings of `V46_32` as of
+2026-09-01) came from `watch_coolant.py` camping in the block, never from the service.
+Camping is safe by construction; switching is what breaks.
+
+**Why it breaks, found in the capture on 2026-09-02 without touching the car.** The
+DiagBox recording holds 76 block switches: 45 UDS->UDS, 24 KWP->KWP, 3 UDS->KWP and only
+3 KWP->UDS - and those three go to `0x6C1` and `0x747`, never to the BSI. Every entry into
+`0x752` in the whole capture came from a UDS block (twice from itself, once from `0x76E`).
+So `KWP -> 0x752` is a transition **DiagBox never performs**, and we were doing it on every
+excursion return.
+
+It is not the entry sequence itself: dumped side by side, `0x752` and `0x747` are
+structurally identical - same `fe` frame, same descriptor
+(`FFXXXXC01+2XXC2XXX0000000000`), same `54xx` timing table, same closing `10 03`. Only the
+address record inside the table differs. So the difference is the *context* of the
+transition, not the frames.
+
+`ecu.KWP_EXIT_HOP` therefore returns in two hops - `KWP -> 0x747 -> target` - so that every
+individual switch is one the capture actually contains. `ecu.enter()` inserts the hop
+itself whenever the current block is KWP and the target is UDS, so any caller gets it.
+**Not yet verified on hardware.** To verify: `drive.py --ecu-every 15 --db /tmp/test.db`
+with the engine running, and watch for `возврат с KWP 0x6A8 через 0x747` followed by engine
+rows rather than a reconnect.
 
 ## A real fault found while testing (2026-08-19)
 
