@@ -147,14 +147,28 @@ def enter(lex, tx, rx, verbose=False, _hop=False):
             log.info(f"возврат с KWP 0x{_current[0]:03X} через 0x{hop[0]:03X}")
             enter(lex, *hop, verbose=verbose, _hop=True)
     leave(lex)          # сперва закрыть предыдущую сессию, как делает DiagBox
+    # Ответ на финальную команду входа ОБЯЗАН быть положительным: C1 на
+    # StartCommunication у KWP, 50 на DiagnosticSessionControl у UDS. Иначе сессия
+    # не открыта, и все запросы в блок уйдут в пустоту - ровно так выглядел второй
+    # вход в двигатель 2026-09-04: первый вход и возврат на BSI прошли, а повторный
+    # дал "молчание 9 из 9". В записи DiagBox видно, что она делает при отказе:
+    # на 81 пришло 5E вместо C1 - и она повторяет ВЕСЬ вход (init, дескриптор,
+    # таблица, 81) ещё раз, и ещё, пока не получит C1. Делаем так же.
+    expect = 0xC1 if is_kwp(key) else 0x50
     last = None
-    for i, g in enumerate(groups(ENTRY[key]), 1):
-        payload, raw = lex.transact_frames(g)
-        last = payload
-        if verbose:
-            what = f"{len(g)} кадр(ов), {sum(len(x) for x in g)} байт"
-            log.info(f"   вход {i}: {what} -> "
-                     f"{describe(payload) if payload else (raw.hex()[:32] or 'нет ответа')}")
+    for attempt in range(1, 4):
+        for i, g in enumerate(groups(ENTRY[key]), 1):
+            payload, raw = lex.transact_frames(g)
+            last = payload
+            if verbose:
+                what = f"{len(g)} кадр(ов), {sum(len(x) for x in g)} байт"
+                log.info(f"   вход {i}: {what} -> "
+                         f"{describe(payload) if payload else (raw.hex()[:32] or 'нет ответа')}")
+        if last and last[0] == expect:
+            break
+        got = last.hex() if last else "нет ответа"
+        log.warning(f"вход в 0x{tx:03X}: ожидал {expect:02X}, получил {got} "
+                    f"(попытка {attempt}/3){' - повторяю' if attempt < 3 else ''}")
     _current = key
     return last
 
