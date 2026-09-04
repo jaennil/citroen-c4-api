@@ -934,3 +934,19 @@ artefact (receipts between acks), and "one ack per packet" broke the handshake. 
 **frame**. Implemented in `Lexia._collect`; payload of a multi-frame reply is
 `frame0[29:-1] + frame_n[4:-1]...`. **Not yet verified on the car** - the check is the usual
 `drive.py --ignore-pause --ecus 6A8 --ecu-every 15`, success is two engine snapshots in a row.
+
+### First real round trip, and what the second entry taught (2026-09-04 20:09)
+
+With frame reassembly in place the cycle **BSI -> engine -> BSI** completed for the first time:
+engine snapshot of **118 values, 0 silent** (was 55 values, 65 silent), the return to the BSI
+without error, and **379 BSI readings in the 7 s after it**. The 13-second timeout is gone.
+
+The *second* entry into the engine then returned nothing - 9 requests, 9 silent - and the
+process hung until SIGTERM. Cause, read from the DiagBox capture: we never check the reply to
+the final entry command. It must be `C1` (StartCommunication accepted) for KWP or `50` for UDS;
+DiagBox's `0x752 -> 0x6A8` gets `c1 d0 8f` first time, but its `0x6C1 -> 0x6BC` gets `5e` and
+**replays the whole entry sequence** until `C1` arrives. `ecu.enter()` now checks the reply
+and retries the full entry up to three times, logging each miss. Not yet verified on the car.
+
+Also: a run that hangs like this leaves the device wedged (`reset_lexia.py`: "залипло"),
+so a replug follows every failed verification - budget for it.
