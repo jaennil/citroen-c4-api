@@ -1013,8 +1013,23 @@ def main():
         print(js)
         return 0
     body = "\n".join("    " + line for line in js.splitlines())
+    # ServerSideApply обязателен, и без него ArgoCD роняет синк.
+    #
+    # Обычный kubectl apply складывает копию ВСЕГО объекта в аннотацию
+    # kubectl.kubernetes.io/last-applied-configuration, а аннотации в Kubernetes
+    # ограничены 262144 байтами. Дашборд дорос до ~300 КБ, и синк начал падать:
+    #
+    #     ConfigMap "grafana-dashboard-citroen" is invalid:
+    #     metadata.annotations: Too long: may not be more than 262144 bytes
+    #
+    # Приложение monitoring встало в OutOfSync, в Grafana осталась версия от
+    # 16 августа, и выглядело это как "переводы не применились". Server-Side
+    # Apply ведёт учёт полей на стороне API-сервера и эту аннотацию не пишет,
+    # поэтому лимит перестаёт упираться при любом размере дашборда.
     print("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: grafana-dashboard-citroen\n"
-          "  namespace: monitoring\n  labels:\n    grafana_dashboard: \"1\"\n"
+          "  namespace: monitoring\n  annotations:\n"
+          "    argocd.argoproj.io/sync-options: ServerSideApply=true\n"
+          "  labels:\n    grafana_dashboard: \"1\"\n"
           "data:\n  citroen.json: |\n" + body)
     return 0
 
