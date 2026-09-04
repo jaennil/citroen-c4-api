@@ -950,3 +950,10 @@ and retries the full entry up to three times, logging each miss. Not yet verifie
 
 Also: a run that hangs like this leaves the device wedged (`reset_lexia.py`: "залипло"),
 so a replug follows every failed verification - budget for it.
+
+**20:17 run, with the entry check:** snapshot 1 (118/0), 379 BSI readings, snapshot 2 (118/0)
+- the second entry now succeeds first time, no retry needed. Then silence: no return to the
+BSI logged, no third snapshot, hang until SIGTERM. The hang moved exactly one step: last run it
+was the second *entry*, now it is the second *exit*. First exit from the engine works, second
+does not. Next step is a usbmon capture of that second return (`capture-return.sh`, engine
+excursion every 5 s catches it inside 45 s) - not another guess.
