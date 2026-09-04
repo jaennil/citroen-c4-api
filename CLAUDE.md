@@ -957,3 +957,18 @@ BSI logged, no third snapshot, hang until SIGTERM. The hang moved exactly one st
 was the second *entry*, now it is the second *exit*. First exit from the engine works, second
 does not. Next step is a usbmon capture of that second return (`capture-return.sh`, engine
 excursion every 5 s catches it inside 45 s) - not another guess.
+
+**20:26 capture of the second exit, analysed.** Both exits are byte-identical up to `82`
+(`21 fe` -> reply -> ACK -> close), so the state before returning is the same. The difference
+is inside the BSI entry: on the failing return the table answered **`78`** instead of `01b4`.
+We took `78` as the result, sent `10 03`, got `15 40 09 02`, then fetched the late `01b4` as
+if it were the session reply, and finally did get `50 03` - but the block was deaf afterwards:
+the first `22 dba8...` drew **zero poll answers in 3.5 s**, and every later command the same,
+until the replug. Both entries without `78` worked. `78` never occurs in the DiagBox recording
+(its one-byte statuses are `60 5d b3 5e 29 3e b4 40`), so we treat it as responsePending: keep
+polling/fetching until a real reply arrives, and if an entry still passed through a `78`,
+replay the whole entry as DiagBox does after `5e`. Not yet verified on the car.
+
+Also: the capture file held **two copies** of the same frames with a 39 s backward jump in
+time - dedupe on `(round(ts,4), dir, hex[:60])` after sorting before counting anything, or
+"5 exits for 2 snapshots" is what you get.
