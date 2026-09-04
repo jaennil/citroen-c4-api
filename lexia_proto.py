@@ -413,6 +413,18 @@ class Lexia:
                                      expect=echo_of(frames[0]))
         if refetch and empty_result(raw):
             payload, raw = self._collect(deadline)
+        # Однобайтный 78 - не результат, а "ещё работаю": настоящий ответ на
+        # таблицу (01 B4) приезжает через ~0.3 с следом. В дампе 2026-09-04 20:26
+        # мы после 78 сразу слали 10 03, получали отказ 15 40 09 02, забирали
+        # запоздавший 01 B4 уже как ответ на команду, формально получали 50 03 -
+        # и после этого блок был глух: первый же запрос 22 DBA8 без единого
+        # ответа на опрос за 3.5 с, дальше глухота на всё до перетыка. Оба входа
+        # без 78 работали. У DiagBox в записи 78 нет ни разу, поэтому её реакция
+        # неизвестна; берём семантику responsePending - дождаться настоящего.
+        waited = 0
+        while payload == b"\x78" and waited < 3:
+            payload, raw = self._collect(deadline)
+            waited += 1
         return payload, raw
 
     def read(self, payload: bytes, deadline: float = 3.0, init_first: bool = True):
