@@ -425,6 +425,9 @@ class Lexia:
         while payload == b"\x78" and waited < 3:
             payload, raw = self._collect(deadline)
             waited += 1
+        if waited:
+            log.info(f"статус 78: дождался настоящего ответа за {waited} доп. цикл(а): "
+                     f"{payload.hex() if payload else 'нет ответа'}")
         return payload, raw
 
     def read(self, payload: bytes, deadline: float = 3.0, init_first: bool = True):

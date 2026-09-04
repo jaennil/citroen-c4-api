@@ -161,6 +161,11 @@ def enter(lex, tx, rx, verbose=False, _hop=False):
         for i, g in enumerate(groups(ENTRY[key]), 1):
             payload, raw = lex.transact_frames(g)
             last = payload
+            # Ответ каждого шага - в журнал всегда, не только с verbose: три прогона
+            # подряд глохли на втором выходе из двигателя, и без usbmon было не
+            # понять, приходил ли 78 и что вообще отвечало устройство на входе.
+            log.info(f"   вход 0x{tx:03X} шаг {i}: "
+                     f"{payload.hex() if payload else 'нет ответа'}")
             if payload == b"\x78":
                 pending = True     # устройство так и не отдало настоящий ответ
             if verbose:
