@@ -850,7 +850,8 @@ The old service process with the previous code still in memory kept connecting f
 21:23-21:32; the moment the service restarted on 2026-09-04 10:10 it failed too. Rolling back
 restored the link at once: 595 BSI readings in 45 s. **The diagnosis stands, the rule does
 not**: DiagBox sends several acks in only 7 of 25 multi-packet replies and one in the other 18,
-so the criterion is not the packet count. Finding it is offline work on the two dumps.
+so the criterion is not the packet count. **Found on 2026-09-04, see the next section: the
+unit is the frame, not the packet.**
 
 ### The three wrong answers
 
@@ -908,3 +909,28 @@ Two small traps from the same evening: `pgrep -cf 'drive.py'` counts the service
 instance *and* the shell running the grep - match on `--ignore-pause` and use
 `grep "[d]rive.py"` to see only manual runs. And `pkill` returning 1 when nothing matched
 aborts an `&&` chain, so cleanup steps after it silently do not run.
+
+## Found: replies come in frames of 256 bytes, one ack per frame (2026-09-04)
+
+Two dumps, the DiagBox switch recording and our own return capture, settled it without the car.
+
+A reply has **two levels**. Packets of 64 bytes make a frame (64 exactly = more follows - this
+level was already handled). Frames make a reply: the length field in byte 2 is one byte, so a
+frame holds at most `0xFC + 4 = 256` bytes, and a longer reply is cut into frames. After the ack
+for a non-final frame the device **sends the next frame on its own** - no poll, no fetch - with a
+4-byte header `44 09 <len> <flags>` instead of the usual 24. Continuation is signalled by byte 3
+lacking bit `0x40`, exactly as with fragmented commands: `0x80` first, `0x41` last, `0xC0`
+single. Each frame carries its own checksum and gets its own `064409`.
+
+Verified on the whole DiagBox dump with no exception: 855 frames with `0xC0` are followed by a
+command, 4 with `0x80` are followed by data. Our own dump has zero multi-frame replies - because
+we never read the second frame. We acked the first 256-byte frame and sent the next command; the
+device refused it with `15 40 09 E9` and returned the unclaimed tail on every fetch. That is the
+13 s timeout on every return route, and the "3 молчащих подряд" - long replies were never
+silent, they were unparseable because they were incomplete.
+
+Two earlier readings of the same evidence were wrong: "several acks per reply" was a parser
+artefact (receipts between acks), and "one ack per packet" broke the handshake. The unit is the
+**frame**. Implemented in `Lexia._collect`; payload of a multi-frame reply is
+`frame0[29:-1] + frame_n[4:-1]...`. **Not yet verified on the car** - the check is the usual
+`drive.py --ignore-pause --ecus 6A8 --ecu-every 15`, success is two engine snapshots in a row.
