@@ -842,7 +842,15 @@ looks plausible, so only the *switching* commands visibly broke. Any long `watch
 run may therefore contain repeated identical samples that were never fresh - worth checking
 before trusting a flat stretch in that data.
 
-Fixed in `Lexia._collect`: ack once per packet received. **Not yet verified on the car.**
+**The one-ack-per-packet fix was wrong and has been rolled back (`62ca446`).** It held for a
+day (`91d4305`, 2026-09-03 21:17) and broke link establishment for every process that loaded
+it: the interface handshake reads multi-packet firmware strings (`BOOT1_PSA_XS__ ... @ACTIA`),
+the extra acks kept the device from leaving its boot phase, and init failed with `Errno 110`.
+The old service process with the previous code still in memory kept connecting fine at
+21:23-21:32; the moment the service restarted on 2026-09-04 10:10 it failed too. Rolling back
+restored the link at once: 595 BSI readings in 45 s. **The diagnosis stands, the rule does
+not**: DiagBox sends several acks in only 7 of 25 multi-packet replies and one in the other 18,
+so the criterion is not the packet count. Finding it is offline work on the two dumps.
 
 ### The three wrong answers
 
@@ -890,11 +898,11 @@ off - but it kept coming with the ignition back **on**, and `reset_lexia.py` rep
 So release+dispose revives the USB endpoint but not the session with the car: a physical
 replug is still required.
 
-What produced it: taking the device away from a **live service session** through
-`with-lexia.sh`. The service disconnects on the pause flag mid-session, and the next cold
-`fe` frame from our own process times out. The safe order for a manual run is therefore
-flag up -> **replug** -> run, not flag up -> run against a session the service just
-abandoned.
+What actually produced it - established a day later by correlating timestamps - was the
+per-packet ack change in `lexia_proto._collect` (see the ack section above), not the handover
+from a live session as first suspected. Every process running that code got `Errno 110`;
+the old process kept working. Rolling the change back fixed it immediately. The handover
+order flag -> replug -> run is still the safe one, but it was not the cause here.
 
 Two small traps from the same evening: `pgrep -cf 'drive.py'` counts the service's own
 instance *and* the shell running the grep - match on `--ignore-pause` and use
