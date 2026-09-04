@@ -157,13 +157,20 @@ def enter(lex, tx, rx, verbose=False, _hop=False):
     expect = 0xC1 if is_kwp(key) else 0x50
     last = None
     for attempt in range(1, 4):
+        pending = False
         for i, g in enumerate(groups(ENTRY[key]), 1):
             payload, raw = lex.transact_frames(g)
             last = payload
+            if payload == b"\x78":
+                pending = True     # устройство так и не отдало настоящий ответ
             if verbose:
                 what = f"{len(g)} кадр(ов), {sum(len(x) for x in g)} байт"
                 log.info(f"   вход {i}: {what} -> "
                          f"{describe(payload) if payload else (raw.hex()[:32] or 'нет ответа')}")
+        if pending:
+            log.warning(f"вход в 0x{tx:03X}: устройство ответило 78 (ещё работает) и не "
+                        f"отдало результат - повторяю вход целиком (попытка {attempt}/3)")
+            continue
         if last and last[0] == expect:
             break
         got = last.hex() if last else "нет ответа"
