@@ -647,6 +647,91 @@ def build():
     panels = []
     y = 0
 
+    # --- обслуживание: что и когда менять ---
+    # Таблица maintenance (maintenance.py) против текущего пробега BSI. Ресурс в
+    # процентах - большее из "по км" и "по времени"; позиция без даты последней
+    # замены считается израсходованной на 100 %: неизвестно = пора. Зоны: до 80 %
+    # зелёная, 80-100 жёлтая, выше - красная. Те же пороги стоят в правилах алертов
+    # (homelab-infra, monitoring/grafana/alerting.yaml), чтобы графики и телеграм
+    # говорили одно и то же.
+    panels.append(row(pid, "Обслуживание", y, collapsed=False)); pid += 1; y += 1
+    maint_cte = (
+        "WITH odo AS (\n"
+        "  SELECT r.value AS km FROM reading r JOIN param p ON p.id = r.param_id\n"
+        "  WHERE p.name = 'MP_KILOMETRAGE_TOTAL' ORDER BY r.ts DESC LIMIT 1),\n"
+        "m AS (\n"
+        "  SELECT m.*, odo.km AS now_km,\n"
+        "    CASE WHEN m.interval_km IS NOT NULL AND m.last_km IS NOT NULL\n"
+        "         THEN (odo.km - m.last_km) / m.interval_km * 100 END AS pct_km,\n"
+        "    CASE WHEN m.interval_months IS NOT NULL AND m.last_ts IS NOT NULL\n"
+        "         THEN EXTRACT(EPOCH FROM (now() - m.last_ts))\n"
+        "              / (m.interval_months * 30.4375 * 86400) * 100 END AS pct_t\n"
+        "  FROM maintenance m CROSS JOIN odo),\n"
+        "r AS (\n"
+        "  SELECT *,\n"
+        "    CASE WHEN interval_km IS NULL AND interval_months IS NULL THEN NULL\n"
+        "         WHEN last_ts IS NULL AND last_km IS NULL THEN 100\n"
+        "         ELSE GREATEST(COALESCE(pct_km, 0), COALESCE(pct_t, 0)) END AS pct\n"
+        "  FROM m)\n"
+    )
+    gauge = panel(pid, "Ресурс до следующей замены, %", 0, y, 9, 11, [{
+        "refId": "A", "datasource": DS, "format": "table", "rawQuery": True,
+        "rawSql": maint_cte + 'SELECT title AS "Позиция", pct AS "Ресурс"\n'
+                  "FROM r WHERE pct IS NOT NULL ORDER BY pct DESC",
+    }], "percent", kind="bargauge")
+    gauge["fieldConfig"]["defaults"].update({
+        "min": 0, "max": 120, "decimals": 0,
+        "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": None}, {"color": "#EAB839", "value": 80},
+            {"color": "red", "value": 100}]},
+    })
+    gauge["options"] = {
+        "orientation": "horizontal", "displayMode": "gradient", "showUnfilled": True,
+        "reduceOptions": {"values": True, "calcs": ["lastNotNull"], "fields": "/Ресурс/"},
+    }
+    gauge["description"] = (
+        "Сколько ресурса выработано с последней замены: большее из доли по пробегу и "
+        "доли по времени. 100 % - пора. Позиция без даты последней замены показывается "
+        "как 100 %: неизвестно, значит считаем, что пора. Пробег - текущий по BSI."
+    )
+    panels.append(gauge); pid += 1
+    table = panel(pid, "Что, когда меняли и когда менять", 9, y, 15, 11, [{
+        "refId": "A", "datasource": DS, "format": "table", "rawQuery": True,
+        "rawSql": maint_cte +
+                  'SELECT title AS "Позиция", pct AS "Ресурс, %",\n'
+                  "  to_char(last_ts, 'YYYY-MM-DD') AS \"Сделано\", last_km AS \"На пробеге\",\n"
+                  "  CASE WHEN interval_km IS NOT NULL AND last_km IS NOT NULL\n"
+                  "       THEN last_km + interval_km END AS \"Следующее, км\",\n"
+                  "  CASE WHEN interval_km IS NOT NULL AND last_km IS NOT NULL\n"
+                  "       THEN last_km + interval_km - now_km END AS \"Осталось, км\",\n"
+                  "  CASE WHEN interval_months IS NOT NULL AND last_ts IS NOT NULL\n"
+                  "       THEN to_char(last_ts + (interval_months || ' months')::interval,"
+                  " 'YYYY-MM-DD') END AS \"Следующее, дата\",\n"
+                  '  notes AS "Примечание"\n'
+                  "FROM r ORDER BY pct DESC NULLS LAST",
+    }], "", kind="table")
+    table["fieldConfig"]["defaults"].update({"custom": {"align": "auto", "cellOptions": {"type": "auto"}}})
+    table["fieldConfig"]["overrides"] = [{
+        "matcher": {"id": "byName", "options": "Ресурс, %"},
+        "properties": [
+            {"id": "unit", "value": "percent"}, {"id": "decimals", "value": 0},
+            {"id": "custom.cellOptions", "value": {"type": "color-background"}},
+            {"id": "thresholds", "value": {"mode": "absolute", "steps": [
+                {"color": "green", "value": None}, {"color": "#EAB839", "value": 80},
+                {"color": "red", "value": 100}]}},
+        ]}, {
+        "matcher": {"id": "byName", "options": "Осталось, км"},
+        "properties": [{"id": "unit", "value": "suffix: км"}, {"id": "decimals", "value": 0}],
+    }]
+    table["options"] = {"showHeader": True, "cellHeight": "sm"}
+    table["description"] = (
+        "Источник - таблица maintenance в базе машины (maintenance.py). Отметить замену: "
+        "maintenance.py --done <позиция> --at <когда> --km <пробег>. Пустое поле 'Сделано' "
+        "означает, что дата последней замены неизвестна."
+    )
+    panels.append(table); pid += 1
+    y += 11
+
     # --- обзор ---
     panels.append(row(pid, "Обзор", y, collapsed=False)); pid += 1; y += 1
     # Коды enum (положение ключа, состояние ГМП) из обзора убраны: без таблицы
