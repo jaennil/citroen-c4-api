@@ -971,6 +971,24 @@ def build():
         "uid": "citroen-c4",
         "title": "Citroen C4",
         "tags": ["citroen", "car", "telemetry"],
+        # События с машиной (event.py) - вертикальные метки на всех панелях, чтобы
+        # видеть, как меняется поведение после ТО. Grafana ждёт колонки time,
+        # text, tags; tags - через запятую, здесь это вид события.
+        "annotations": {"list": [{
+            "name": "События с машиной",
+            "datasource": DS,
+            "enable": True,
+            "hide": False,
+            "iconColor": "orange",
+            "target": {
+                "format": "table",
+                "rawQuery": True,
+                "rawSql": ("SELECT ts AS time, title AS text, kind AS tags\n"
+                           "FROM event\n"
+                           "WHERE $__timeFilter(ts)\n"
+                           "ORDER BY ts"),
+            },
+        }]},
         "timezone": "browser",
         "schemaVersion": 39,
         "refresh": "30s",
