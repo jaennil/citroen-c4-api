@@ -41,6 +41,18 @@ CREATE TABLE IF NOT EXISTS event (
     details TEXT,
     synced  INTEGER NOT NULL DEFAULT 0
 );
+-- Расписание обслуживания: одна строка на позицию. Интервалы в км и/или месяцах,
+-- когда делали последний раз (NULL = неизвестно, что для дашборда равно "пора").
+-- Досылается целиком каждым sync.py, таблица маленькая.
+CREATE TABLE IF NOT EXISTS maintenance (
+    item            TEXT PRIMARY KEY,
+    title           TEXT NOT NULL,
+    interval_km     INTEGER,
+    interval_months INTEGER,
+    last_ts         REAL,
+    last_km         REAL,
+    notes           TEXT
+);
 """
 
 
@@ -134,6 +146,27 @@ class Store:
     def mark_events_synced(self, ids):
         self.db.executemany("UPDATE event SET synced=1 WHERE id=?", [(i,) for i in ids])
         self.db.commit()
+
+    def maintenance_all(self):
+        return self.db.execute(
+            "SELECT item, title, interval_km, interval_months, last_ts, last_km, notes "
+            "FROM maintenance ORDER BY item").fetchall()
+
+    def maintenance_set(self, item, title, interval_km, interval_months, notes=""):
+        self.db.execute(
+            "INSERT INTO maintenance(item, title, interval_km, interval_months, notes) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(item) DO UPDATE SET title=excluded.title, "
+            "interval_km=excluded.interval_km, interval_months=excluded.interval_months, "
+            "notes=COALESCE(NULLIF(excluded.notes,''), maintenance.notes)",
+            (item, title, interval_km, interval_months, notes))
+        self.db.commit()
+
+    def maintenance_done(self, item, ts, km, notes=None):
+        cur = self.db.execute(
+            "UPDATE maintenance SET last_ts=?, last_km=?, notes=COALESCE(?, notes) WHERE item=?",
+            (ts, km, notes, item))
+        self.db.commit()
+        return cur.rowcount
 
     def stats(self):
         total = self.db.execute("SELECT COUNT(*) FROM reading").fetchone()[0]

@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS event (
     details text,
     UNIQUE (ts, title)
 );
+CREATE TABLE IF NOT EXISTS maintenance (
+    item            text PRIMARY KEY,
+    title           text NOT NULL,
+    interval_km     integer,
+    interval_months integer,
+    last_ts         timestamptz,
+    last_km         double precision,
+    notes           text
+);
 """
 
 
@@ -81,6 +90,19 @@ def main():
         with conn.cursor() as cur:
             cur.execute(PG_SCHEMA)
         conn.commit()
+        # расписание обслуживания - целиком, каждый раз: строк единицы, а правки
+        # (сделали ТО, уточнили интервал) должны доезжать без отдельного флага
+        rows = store.maintenance_all()
+        if rows:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO maintenance(item,title,interval_km,interval_months,last_ts,last_km,notes) "
+                    "VALUES (%s,%s,%s,%s,to_timestamp(%s),%s,%s) "
+                    "ON CONFLICT (item) DO UPDATE SET title=EXCLUDED.title, "
+                    "interval_km=EXCLUDED.interval_km, interval_months=EXCLUDED.interval_months, "
+                    "last_ts=EXCLUDED.last_ts, last_km=EXCLUDED.last_km, notes=EXCLUDED.notes",
+                    rows)
+            conn.commit()
         if not st["pending"] and not st.get("events"):
             log.info("схема на месте, отправлять нечего.")
             return 0
