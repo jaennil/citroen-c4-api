@@ -64,9 +64,6 @@ def main():
     st = store.stats()
     log.info(f"локально: {st['total']} значений, {st['params']} параметров, "
              f"к отправке {st['pending']}")
-    if not st["pending"] and not st.get("events"):
-        log.info("отправлять нечего.")
-        return 0
     if args.dry_run:
         for r in store.unsynced(10):
             log.info(f"  {r}")
@@ -77,9 +74,16 @@ def main():
 
     sent = 0
     with psycopg.connect(args.dsn) as conn:
+        # Схема - при КАЖДОМ подключении, до проверки "есть ли что отправлять".
+        # Иначе новая таблица (event для аннотаций Grafana) не появлялась в
+        # Postgres, пока не накопится хоть одна строка, а дашборд уже ссылался
+        # на неё и падал с "relation event does not exist".
         with conn.cursor() as cur:
             cur.execute(PG_SCHEMA)
         conn.commit()
+        if not st["pending"] and not st.get("events"):
+            log.info("схема на месте, отправлять нечего.")
+            return 0
         while True:
             rows = store.unsynced(args.batch)
             if not rows:
