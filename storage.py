@@ -29,6 +29,18 @@ CREATE TABLE IF NOT EXISTS reading (
 );
 CREATE INDEX IF NOT EXISTS idx_reading_unsynced ON reading(id) WHERE synced = 0;
 CREATE INDEX IF NOT EXISTS idx_reading_param_ts ON reading(param_id, ts);
+-- События с машиной: ТО, замены, заправки, заметки. Нужны, чтобы на графиках
+-- видеть, как меняется поведение после замены масла, свечей и т.д. - в Grafana
+-- это аннотации, вертикальные метки на всех панелях сразу. Досылаются в Postgres
+-- тем же sync.py и так же идемпотентно.
+CREATE TABLE IF NOT EXISTS event (
+    id      INTEGER PRIMARY KEY,
+    ts      REAL NOT NULL,
+    title   TEXT NOT NULL,
+    kind    TEXT NOT NULL,      -- service / repair / fuel / note
+    details TEXT,
+    synced  INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -107,11 +119,28 @@ class Store:
                             [(i,) for i in ids])
         self.db.commit()
 
+    def add_event(self, ts: float, title: str, kind: str = "note", details: str = ""):
+        cur = self.db.execute(
+            "INSERT INTO event(ts, title, kind, details) VALUES (?,?,?,?)",
+            (ts, title, kind, details))
+        self.db.commit()
+        return cur.lastrowid
+
+    def unsynced_events(self):
+        return self.db.execute(
+            "SELECT id, ts, title, kind, details FROM event WHERE synced = 0 ORDER BY id"
+        ).fetchall()
+
+    def mark_events_synced(self, ids):
+        self.db.executemany("UPDATE event SET synced=1 WHERE id=?", [(i,) for i in ids])
+        self.db.commit()
+
     def stats(self):
         total = self.db.execute("SELECT COUNT(*) FROM reading").fetchone()[0]
         pend = self.db.execute("SELECT COUNT(*) FROM reading WHERE synced=0").fetchone()[0]
         params = self.db.execute("SELECT COUNT(*) FROM param").fetchone()[0]
-        return dict(total=total, pending=pend, params=params)
+        ev = self.db.execute("SELECT COUNT(*) FROM event WHERE synced=0").fetchone()[0]
+        return dict(total=total, pending=pend, params=params, events=ev)
 
     def close(self):
         self.db.close()

@@ -40,6 +40,14 @@ CREATE TABLE IF NOT EXISTS reading (
 );
 CREATE INDEX IF NOT EXISTS idx_reading_param_ts ON reading (param_id, ts DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reading_dedup ON reading (param_id, ts);
+CREATE TABLE IF NOT EXISTS event (
+    id      serial PRIMARY KEY,
+    ts      timestamptz NOT NULL,
+    title   text NOT NULL,
+    kind    text NOT NULL,
+    details text,
+    UNIQUE (ts, title)
+);
 """
 
 
@@ -56,7 +64,7 @@ def main():
     st = store.stats()
     log.info(f"локально: {st['total']} значений, {st['params']} параметров, "
              f"к отправке {st['pending']}")
-    if not st["pending"]:
+    if not st["pending"] and not st.get("events"):
         log.info("отправлять нечего.")
         return 0
     if args.dry_run:
@@ -95,6 +103,18 @@ def main():
             store.mark_synced([r[0] for r in rows])
             sent += len(rows)
             log.info(f"  отправлено {sent}...")
+
+        # события - отдельной таблицей, тоже идемпотентно по (ts, title)
+        evs = store.unsynced_events()
+        if evs:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO event(ts, title, kind, details) "
+                    "VALUES (to_timestamp(%s), %s, %s, %s) ON CONFLICT DO NOTHING",
+                    [(ts, t, k, d) for _, ts, t, k, d in evs])
+            conn.commit()
+            store.mark_events_synced([e[0] for e in evs])
+            log.info(f"  событий отправлено {len(evs)}")
 
     log.info(f"готово, отправлено {sent} значений.")
     return 0
