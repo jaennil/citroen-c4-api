@@ -1035,3 +1035,12 @@ warning, `citroen-maint-due` critical) - по одному экземпляру 
 Начальный набор в `maintenance.SEED` - интервалы под эту машину (195 тыс., 5W-40, пыль), не
 заводские. Пробег на момент ТО 2026-09-06 взят с последнего замера BSI 4 сентября (195 826),
 то есть занижен на десятки км. Антифриз: дата 2026-03-01 и 185 000 км приблизительные.
+
+### A quoting slip took Grafana down for ten minutes (2026-09-07)
+
+`sed` put `printf "%.0f"` inside a `summary: "..."` string in `alerting.yaml`; YAML closed the
+string at the inner quote, `%` could not start a token, provisioning failed to parse
+`rules.yaml`, and **Grafana refused to start** - CrashLoopBackOff, two Telegram alerts. Rule:
+templates with inner double quotes go in **single-quoted** YAML strings, and every edit to
+`alerting.yaml` is parsed with `yaml.safe_load` on each `data` entry *before* the push.
+`pyyaml` is now in the venv for exactly that.
