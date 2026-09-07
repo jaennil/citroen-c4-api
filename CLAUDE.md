@@ -972,3 +972,27 @@ replay the whole entry as DiagBox does after `5e`. Not yet verified on the car.
 Also: the capture file held **two copies** of the same frames with a 39 s backward jump in
 time - dedupe on `(round(ts,4), dir, hex[:60])` after sorting before counting anything, or
 "5 exits for 2 snapshots" is what you get.
+
+## Found: we sent the final entry command too early (2026-09-07)
+
+Read out of the 20:55 capture against the DiagBox recording, no car needed.
+
+**DiagBox gets zero `15 40 09 xx` rejections in 973 commands. We got one on every entry** -
+four entries, four rejections, all on the final command (`10 03` / `81`) right after the
+table. The note in `transact()` saying "the first command after the table is always
+rejected, resend it" was wrong: it is rejected because we send it **2.4 ms** after the ack on
+the table reply, where DiagBox waits **8-58 ms, median 22**. Each rejection triggered our
+retry path (fetch the stale reply, resend), and after four or five of those the device went
+deaf to everything - the "hang on the 4th/5th entry" of the previous three sessions.
+
+Two things ruled out on the way, both by data: the session handle (byte 8) is `aa` on every
+DiagBox entry too, so identical to ours; and device-level commands (`09 07 12 0B`) appear in
+DiagBox only during the handshake, never between blocks.
+
+Also confirmed: our table reply is often `78` where DiagBox always gets `01b4`/`01cc` - that
+too is "too early": the device is still applying the table. Two quick re-fetches were not
+enough (the real reply came ~300 ms later), so the wait is now by time, up to 0.6 s.
+
+Fix: `ecu.SETTLE_BEFORE_FINAL = 0.03` before the last entry group. **Not yet verified on
+the car.** Success criterion for the next run: entry-step log shows `5003`/`c1d08f` with
+**no `ОТКАЗ`** and three engine snapshots with BSI readings between them.
