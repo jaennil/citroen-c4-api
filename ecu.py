@@ -28,6 +28,7 @@ ecu_entry.py, а не собираются заново: попытки соби
 import argparse
 import logging
 import sys
+import time
 
 from ecu_entry import ENTRY, NAMES
 from lexia_proto import Lexia, describe, read_frame
@@ -53,6 +54,9 @@ IDENT_KWP = [0x80, 0xFE, 0x01, 0xC0]   # идентификация, состо�
 # умолчанию у UDS, 82 - StopCommunication у KWP.
 LEAVE_UDS = "400917c0ff020200000000000000000000000000000000001001cb"
 LEAVE_KWP = "400916c0ff02010000000000000000000000000000000000825c"
+
+# Пауза между ответом таблицы и финальной командой входа, с. См. enter().
+SETTLE_BEFORE_FINAL = 0.03
 
 _current = None
 
@@ -158,7 +162,17 @@ def enter(lex, tx, rx, verbose=False, _hop=False):
     last = None
     for attempt in range(1, 4):
         pending = False
-        for i, g in enumerate(groups(ENTRY[key]), 1):
+        gs = groups(ENTRY[key])
+        for i, g in enumerate(gs, 1):
+            if i == len(gs):
+                # Пауза перед финальной командой (10 03 / 81) - то, чего не хватало
+                # на каждом входе. Измерено по записи DiagBox: после ack на ответ
+                # таблицы она выжидает 8-58 мс (медиана 22) и за 973 команды не
+                # получает ни одного отказа. Мы слали через 2.4 мс и получали
+                # 15 40 09 02 на КАЖДОМ входе, лечили повтором - а отказы копились,
+                # и на 4-5-м входе устройство глохло на всё до перетыка. Дамп 20:55
+                # 2026-09-04, четыре входа - четыре отказа, все на этом шаге.
+                time.sleep(SETTLE_BEFORE_FINAL)
             payload, raw = lex.transact_frames(g)
             last = payload
             # Ответ каждого шага - в журнал всегда, не только с verbose: три прогона
