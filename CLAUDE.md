@@ -259,10 +259,10 @@ Getting there took four protocol fixes, none of which was visible without hardwa
   250 ms and survived; KWP blocks allow 1000 ms and did not. Giving up early left the
   command unfinished and the next write failed with `USBError [Errno 5]`.
 * **Retry a command the device rejects.** The first command after the configuration table
-  is *always* rejected - the receipt is `15 40 09 02` instead of `06 40 09` - and resending
-  the identical frame succeeds. Measured: reject, then success with `C1`
-  (StartCommunication), then engine reads flow. Without the retry the KWP link never came
-  up and every request returned nothing.
+  was rejected on every entry - the receipt is `15 40 09 02` instead of `06 40 09` - and
+  resending the identical frame succeeded. The retry made entries work, but the rejection
+  itself was our bug, not protocol: see "Fragments need their own receipts" (2026-09-07).
+  With that fixed there are no rejections at all; the retry stays as a safety net.
 * **Reassemble multi-packet replies.** A reply arrives in 64-byte packets and a full 64
   means more follows. One `21 C0 80 01` carries 64 parameters at once, so truncating at one
   packet dropped every block read: 21 of 189 parameters instead of 55.
@@ -993,9 +993,10 @@ Also confirmed: our table reply is often `78` where DiagBox always gets `01b4`/`
 too is "too early": the device is still applying the table. Two quick re-fetches were not
 enough (the real reply came ~300 ms later), so the wait is now by time, up to 0.6 s.
 
-Fix: `ecu.SETTLE_BEFORE_FINAL = 0.03` before the last entry group. **Not yet verified on
-the car.** Success criterion for the next run: entry-step log shows `5003`/`c1d08f` with
-**no `ОТКАЗ`** and three engine snapshots with BSI readings between them.
+Fix attempted: `ecu.SETTLE_BEFORE_FINAL = 0.03` before the last entry group. **Verified on
+the car 2026-09-07 21:05 and it did not help**: the usbmon capture still shows `15 40 09 02`
+on every entry, hidden from the log because the retry lives inside `transact()`. The 8-58 ms
+DiagBox pause was real but not the cause - see the next section.
 
 ## События с машиной как аннотации в Grafana (2026-09-07)
 
@@ -1044,3 +1045,33 @@ string at the inner quote, `%` could not start a token, provisioning failed to p
 templates with inner double quotes go in **single-quoted** YAML strings, and every edit to
 `alerting.yaml` is parsed with `yaml.safe_load` on each `data` entry *before* the push.
 `pyyaml` is now in the venv for exactly that.
+
+## Fragments need their own receipts - the entry rejections, solved (2026-09-07)
+
+Three runs on the car with the usbmon sniffer left running, diffed against the DiagBox
+recording. Two hypotheses died on hardware first: the settle before `81` (above) and a
+0.4 s settle after `C1` before the first command (`ecu.SETTLE_AFTER_KWP_ENTRY`, kept because
+DiagBox does wait 312-391 ms there, but it fixed nothing on its own).
+
+**The cause: we sent the second fragment of the configuration table before the receipt for
+the first.** DiagBox: fragment 1 -> `06 40 09` after ~4 ms -> fragment 2 -> `06 40 09` after
+~76 ms -> ready -> the real table reply `01 B4`/`01 CC`. Seventy-six tables in its recording,
+77-81 ms from last fragment to real reply, not one empty receipt. Ours: fragment 2 went out
+3.5 ms after fragment 1, the device sent a single receipt, then **two empty result frames**
+(`44 09 15 c0 00 16 8c 01 aa 00...`), and the real reply only ~490 ms later - by which time we
+had sent `81`, got `15 40 09 02`, fetched the late table reply, and resent `81`. Every entry,
+every run. This is also where the `78` statuses came from.
+
+`transact_frames` now reads the receipt after each non-final fragment and sends the next one
+only then. Result, run 21:20-21:22 with `--ecu-every 15`: **7 engine snapshots in 100 s, 0
+rejections, 118 values each, 150-390 BSI readings between them, coolant 91-93 C varying
+between snapshots (so fresh, not stale), device healthy afterwards.** Entries got faster too
+(0.9 s instead of 1.2). First time the excursion has ever survived past the second cycle.
+
+The service unit now carries `--ecus 6A8 --ecu-every 300`.
+
+Two side findings from the same evening. `drive.py` had `import usb.core, usb.util` inside
+`main()`, which made `usb` a local and turned the module-level `except usb.core.USBError`
+into `UnboundLocalError` the first time it was needed. And `capture-return.sh`'s `kill -INT`
+does not stop the root-owned sniffer: it kept appending to `return.log` for the next runs -
+handy this once, but check `pgrep -f sniff_lexia_full` after a capture.
