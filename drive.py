@@ -27,7 +27,7 @@ import signal
 import sys
 import time
 
-import usb.core
+import usb.core, usb.util
 
 from did_catalog import BY_DID
 from ecu import enter
@@ -258,7 +258,6 @@ def main():
                 # ошибке ввода-вывода, дескриптор утекает и устройство остаётся
                 # занятым при живом процессе. Находим заново и отпускаем принудительно.
                 try:
-                    import usb.core, usb.util
                     from lexia_proto import PRODUCT_ID, VENDOR_ID
                     dev = usb.core.find(idVendor=VENDOR_ID, idProduct=PRODUCT_ID)
                     if dev is not None:
