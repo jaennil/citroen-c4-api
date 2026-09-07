@@ -996,3 +996,24 @@ enough (the real reply came ~300 ms later), so the wait is now by time, up to 0.
 Fix: `ecu.SETTLE_BEFORE_FINAL = 0.03` before the last entry group. **Not yet verified on
 the car.** Success criterion for the next run: entry-step log shows `5003`/`c1d08f` with
 **no `ОТКАЗ`** and three engine snapshots with BSI readings between them.
+
+## События с машиной как аннотации в Grafana (2026-09-07)
+
+Чтобы на графиках было видно, как меняется поведение после ТО, замены детали или
+заправки, есть таблица `event` (ts, title, kind, details) - в SQLite рядом с телеметрией,
+досылается в Postgres тем же `sync.py`, идемпотентно по `(ts, title)`. Дашборд читает её
+слоем аннотаций: оранжевые вертикальные метки на **всех** панелях сразу, с подписью.
+
+    ./.venv/bin/python event.py "ТО: свечи, фильтры, масло" --kind service \
+        --at "2026-09-06 14:00" --details "Bosch 0242229797 x4, MANN C4371/1, ..."
+    ./.venv/bin/python event.py --list
+
+`kind` - service / repair / fuel / note, попадает в теги аннотации. Время локальное; без
+`--at` - сейчас. В Grafana событие появляется после ближайшей досылки (таймер c4-sync
+каждые 15 минут) или сразу: `FORCE=1 ./sync-now.sh`.
+
+Две грабли, уже пройденные: `sync-now.sh` раньше выходил "отправлять нечего", считая только
+замеры - события не учитывались; и схема Postgres создавалась только когда было что
+отправлять, так что новая таблица не появлялась, а дашборд уже к ней обращался. Оба
+поправлены: события считаются, схема создаётся при каждом подключении, `FORCE=1` подключает
+принудительно.
