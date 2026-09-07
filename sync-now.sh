@@ -29,10 +29,13 @@ cd "$HERE" || exit 0
 PENDING=$("$HERE/.venv/bin/python" - "$DB" <<'PY'
 import sys
 from storage import Store
-print(Store(sys.argv[1]).stats()["pending"])
+st = Store(sys.argv[1]).stats(); print(st["pending"] + st.get("events", 0))
 PY
 )
-[ "${PENDING:-0}" -gt 0 ] || { echo "отправлять нечего"; exit 0; }
+# Считаются и замеры, и события (event.py). FORCE=1 - подключиться в любом
+# случае: нужно один раз после появления новой таблицы, чтобы sync.py создал её
+# в Postgres до того, как дашборд к ней обратится.
+[ "${PENDING:-0}" -gt 0 ] || [ "${FORCE:-0}" = 1 ] || { echo "отправлять нечего"; exit 0; }
 echo "к отправке: $PENDING значений"
 
 SSH_OPTS=(-n -i "$SSH_KEY" -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5)
