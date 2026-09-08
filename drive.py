@@ -33,7 +33,7 @@ from did_catalog import BY_DID
 from ecu import enter
 from ecu_catalog import ECUS
 from lexia_proto import Lexia, parse_multi, plan_batches, read_multi_frame
-from poll_all import load_dead, poll_ecu, save_dead
+from poll_all import SKIP_BLOCKS, load_dead, poll_ecu, save_dead
 from storage import Store
 from telemetry import ALIASES, DRIVE_FULL_EVERY, DRIVE_HOT, decode, name_of
 
@@ -150,7 +150,7 @@ def main():
     # бесконечный цикл, не собирая даже BSI. Причина найдена и устранена - перед
     # каждым чтением нужен кадр init, как это делает DiagBox (см. Lexia.read).
     ap.add_argument("--ecus",
-                    default="6A8,747,6A8,742,6AD,75F,6C8,6B5,730,744,731,77B",
+                    default="6A8,747,6A8,742,6AD,75F,6B5,730,744,731,77B",
                     help="адреса чужих блоков через запятую, hex; пусто - только BSI")
     # ПОЛНАЯ вылазка по умолчанию ВЫКЛЮЧЕНА (0). Она кладёт интерфейс: проверено
     # трижды на машине, через 30-60 с после начала обхода двигателя приходит
@@ -223,6 +223,10 @@ def main():
         key = next((k for k in ECUS if k[0] == want), None)
         if key is None:
             log.warning(f"блока 0x{want:03X} нет в каталоге - пропускаю")
+        elif want in SKIP_BLOCKS:
+            # VCI 0x6C8 воспроизводимо кладёт интерфейс (24 молчащих запроса подряд,
+            # следующий блок уже не отвечает). Список один - poll_all.SKIP_BLOCKS.
+            log.warning(f"блок 0x{want:03X} в списке пропуска - не трогаю")
         else:
             extra.append(key)
             if args.ecu_every:
