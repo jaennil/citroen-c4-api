@@ -472,6 +472,15 @@ Plain text over the BLE UART is enough - `R1`/`R0` to force the beam, `S` for st
 
 ## Collecting more than the BSI
 
+**Status 2026-09-07: the excursion works and the service runs it** - `--ecus 6A8
+--ecu-every 300` in `systemd/c4-telemetry.service`, verified live (see "Fragments need their
+own receipts" at the end). The paragraphs below about the excursion failing and about the
+`0x747` hop are the history of getting there; the hop table `ecu.KWP_EXIT_HOP` is empty and
+stays so. Other blocks (ABS `0x6AD`, GEP `0x6B5`, BSM `0x747`, ...) have entry sequences and
+catalogues and use the same code path, but have not been read since the fix: test with
+`drive.py --ignore-pause --ecus 6A8,6AD,6B5,747 --ecu-every 15 --db /tmp/t.db` before adding
+them to the unit. `drive.py` refuses blocks from `poll_all.SKIP_BLOCKS` (VCI).
+
 `drive.py --ecus 6A8 --ecu-every 300` makes the collector leave the BSI every five minutes,
 enter another block, read its catalogue, and come back. Two things shape that design.
 
