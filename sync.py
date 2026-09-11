@@ -63,6 +63,14 @@ CREATE TABLE IF NOT EXISTS event (
     details text,
     UNIQUE (ts, title)
 );
+CREATE TABLE IF NOT EXISTS norm_zone (
+    name  text NOT NULL,       -- имя параметра, как в param.name
+    title text NOT NULL,
+    lo    double precision,    -- красный отрезок [lo, hi); NULL - без границы
+    hi    double precision,
+    zone  text NOT NULL,       -- подпись отрезка для сообщения алерта
+    PRIMARY KEY (name, zone)
+);
 CREATE TABLE IF NOT EXISTS maintenance (
     item            text PRIMARY KEY,
     title           text NOT NULL,
@@ -107,6 +115,16 @@ def main():
         # на неё и падал с "relation event does not exist".
         with conn.cursor() as cur:
             cur.execute(PG_SCHEMA)
+        conn.commit()
+        # красные зоны из norms.py - целиком, каждый раз: общее правило алертов в
+        # Grafana читает их из этой таблицы, так что новая зона в norms.py становится
+        # алертом сама, без правки правил
+        from norms import red_zones
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM norm_zone")
+            cur.executemany(
+                "INSERT INTO norm_zone(name, title, lo, hi, zone) VALUES (%s,%s,%s,%s,%s)",
+                [(z["name"], z["title"], z["lo"], z["hi"], z["zone"]) for z in red_zones()])
         conn.commit()
         # расписание обслуживания - целиком, каждый раз: строк единицы, а правки
         # (сделали ТО, уточнили интервал) должны доезжать без отдельного флага

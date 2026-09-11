@@ -137,36 +137,8 @@ def panel(pid, title, gx, gy, gw, gh, targets, unit="", kind="timeseries", extra
     return p
 
 
-# Границы для параметров, где есть смысл в пороговых линиях.
-# Температура масла: до 110 норма, 110-125 высокая нагрузка, 125-140 "опасненько",
-# выше 140 масло деградирует быстро. Скорость окисления примерно удваивается
-# на каждые 10 °C выше сотни, отсюда и шаг.
-THRESHOLDS = {
-    "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE": [
-        (None, "green"), (110, "#EAB839"), (125, "orange"), (140, "red")],
-    "TEMPERATURE_HUILE_MESUREE": [
-        (None, "green"), (110, "#EAB839"), (125, "orange"), (140, "red")],
-    "MP_TENSION_ALIMENTION_BSI": [
-        (None, "red"), (11.5, "orange"), (12.4, "green"), (15.0, "orange")],
-    # Топливо: чем меньше, тем хуже, поэтому базовый цвет красный,
-    # а зелёный начинается сверху. Объём бака посчитан по данным машины:
-    # 49.46 л при указателе 81% даёт 61 л.
-    "MP_NIVEAU_CARBURANT_MESURE": [
-        (None, "red"), (5, "orange"), (10, "green")],
-    # Напряжение покоя свинцового аккумулятора: 12.7 - полный заряд,
-    # 12.4 - около половины, ниже 12.0 - глубокий разряд и сульфатация.
-    "MP_TENSION_BATTERIE_AU_REPOS": [
-        (None, "red"), (12.0, "orange"), (12.4, "#EAB839"), (12.7, "green")],
-    # Уровень масла: BSI отдаёт процент между метками min и max на щупе.
-    "MP_NIVEAU_HUILE_MOTEUR_MOYENNE": [
-        (None, "red"), (20, "orange"), (40, "green")],
-    # Км до ТО: чем меньше, тем ближе обслуживание.
-    "MP_NOMBRE_KILOMETRE_AVANT_MAINTENANCE": [
-        (None, "red"), (500, "orange"), (1500, "green")],
-    # Расход: тут наоборот, чем больше тем хуже.
-    "MP_CONSOMMATION_CARBURANT_MOYENNE_TRAJET1": [
-        (None, "green"), (9, "#EAB839"), (11, "orange"), (14, "red")],
-}
+# Зоны всех параметров живут в norms.py (переехали туда 12.09.2026: один источник
+# для графиков и для общего правила алертов, см. norms.red_zones).
 
 # Пределы оси для панелей с порогами. Без них Grafana масштабирует ось по данным
 # (99..101 °C), и линии на 110/125/140 просто не попадают в кадр. Платим тем, что
@@ -292,7 +264,7 @@ def title_for(name, fallback):
 
 
 def steps_for(name):
-    return THRESHOLDS.get(name) or norms.steps(name)
+    return norms.steps(name)
 
 
 def lines_for(name):

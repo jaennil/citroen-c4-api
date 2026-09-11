@@ -35,6 +35,40 @@
 G, Y, O, R = "green", "#EAB839", "orange", "red"
 
 NORMS = {
+    # --- BSI: переехали сюда из make_dashboard.THRESHOLDS 12.09.2026, чтобы у зон был
+    # один дом, из которого растут и графики, и алерты (см. red_zones ниже). alert=False -
+    # красная зона на графике есть, а в телеграм не шлём: это "посмотри", а не "действуй".
+    "MP_TEMPERATURE_HUILE_MOTEUR_CALCULEE": dict(
+        title="Температура масла (расчётная)", src="физика",
+        steps=[(None, G), (110, Y), (125, O), (140, R)],
+        help="До 110 норма, 110-125 высокая нагрузка, выше 140 масло деградирует быстро: "
+             "скорость окисления удваивается на каждые 10 °C выше сотни."),
+    "TEMPERATURE_HUILE_MESUREE": dict(
+        title="Температура масла (замер)", src="физика",
+        steps=[(None, G), (110, Y), (125, O), (140, R)], help="См. расчётную температуру масла."),
+    "MP_TENSION_ALIMENTION_BSI": dict(
+        title="Напряжение питания BSI", src="физика",
+        steps=[(None, R), (11.5, O), (12.4, G), (15.0, O)],
+        help="Ниже 11.5 В - аккумулятор садится или генератор не заряжает; выше 15 - перезаряд."),
+    "MP_NIVEAU_CARBURANT_MESURE": dict(
+        title="Топливо в баке (замер)", src="машина", alert=False,
+        steps=[(None, R), (5, O), (10, G)],
+        help="Бак 61 л посчитан по данным машины: 49.46 л при указателе 81 %."),
+    "MP_TENSION_BATTERIE_AU_REPOS": dict(
+        title="Напряжение АКБ в покое", src="физика",
+        steps=[(None, R), (12.0, O), (12.4, Y), (12.7, G)],
+        help="Свинцовый аккумулятор: 12.7 В полный заряд, 12.4 половина, ниже 12.0 глубокий разряд."),
+    "MP_NIVEAU_HUILE_MOTEUR_MOYENNE": dict(
+        title="Уровень масла (среднее)", src="машина",
+        steps=[(None, R), (20, O), (40, G)], help="Единицы датчика, не литры: ниже 20 - долить."),
+    "MP_NOMBRE_KILOMETRE_AVANT_MAINTENANCE": dict(
+        title="Км до обслуживания", src="машина", alert=False,
+        steps=[(None, R), (500, O), (1500, G)],
+        help="Собственный счётчик ТО машины; наш учёт обслуживания в ряду выше, у него свои алерты."),
+    "MP_CONSOMMATION_CARBURANT_MOYENNE_TRAJET1": dict(
+        title="Расход средний, поездка 1", src="машина", alert=False,
+        steps=[(None, G), (9, Y), (11, O), (14, R)], help="Городской расход этого мотора 8-10 л."),
+
     # --- другие блоки: то, что вошло в ряд "Другие блоки: главное" ------------
     # Названия здесь нужны и без зон: metric_sql берёт norms.title() первым, и без
     # записи легенда была бы автопереводом мнемоники.
@@ -176,7 +210,7 @@ NORMS = {
     # Полезным он при этом быть не перестал: с вырезанным катализатором это
     # вторая копия верхнего датчика, и сравнение двух графиков ловит умирающий
     # датчик - если один качается, а второй замер, виноват замерший.
-    "V46_32:MP_CHARGE_ESTIMEE_CANISTER": dict(
+    "V46_32:MP_CHARGE_ESTIMEE_CANISTER": dict( alert=False,
         title="Насыщение адсорбера паров бензина",
         src="машина",
         steps=[(None, G), (15, Y), (18, R)],
@@ -266,7 +300,7 @@ NORMS = {
               "риск детонации: смотреть, не забор ли горячего воздуха. "
               "Сравнивать с наружной температурой на соседнем графике."),
     ),
-    "V46_32:MP_REGIME_MOTEUR": dict(
+    "V46_32:MP_REGIME_MOTEUR": dict( alert=False,
         title="Обороты двигателя (по блоку двигателя)",
         src="машина",
         steps=[(None, G), (5500, Y), (6200, R)],
@@ -410,3 +444,28 @@ def help_text(name):
            "физика": "Источник границ: свойства самой величины, не база DiagBox.",
            "машина": "Источник границ: замеры этой машины."}[n["src"]]
     return f"{n['help']}\n\n{src}"
+
+
+def red_zones():
+    """Красные интервалы всех зон - источник для общего правила алертов.
+
+    steps - восходящий список (порог, цвет); красный отрезок тянется от своего
+    порога до следующего. Красный первым (None, red) значит "всё, что ниже первого
+    порога", то есть lo=None. У одной зоны красных отрезков может быть два - цепи
+    пиропатронов: ниже 1.5 и выше 4.5 Ом. alert=False в записи исключает зону.
+    Результат: список dict(name, title, lo, hi, zone) - zone это подпись вида
+    "< 1.5" или ">= 115" для сообщения.
+    """
+    out = []
+    for name, n in NORMS.items():
+        steps = n.get("steps")
+        if not steps or n.get("alert", True) is False:
+            continue
+        for i, (thr, colour) in enumerate(steps):
+            if colour != R:
+                continue
+            hi = steps[i + 1][0] if i + 1 < len(steps) else None
+            zone = (f"< {hi:g}" if thr is None else
+                    f">= {thr:g}" if hi is None else f"{thr:g} .. {hi:g}")
+            out.append(dict(name=name, title=n.get("title") or name, lo=thr, hi=hi, zone=zone))
+    return out
