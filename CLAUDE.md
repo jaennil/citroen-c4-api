@@ -499,9 +499,23 @@ time. The unit passes only `--ecu-every 20`; `--ecus ADDR[:s]` is now a manual o
 whole-block checks and replaces the schedule. BSI hot parameters stay at 2 Hz and the full BSI
 snapshot at 60 s. `drive.py` refuses blocks from `poll_all.SKIP_BLOCKS` (VCI).
 
-Open: BSM `0x747` answers only its 12 identification DIDs; all 51 measurement DIDs, including
-`22D440` (high-beam command state needed to verify the MITM), are refused. The NRC was not
-logged; reading it is the next step before assuming the DIDs need an extended session.
+**Refusals decoded (2026-09-11 22:04).** `poll_ecu` now records the NRC of every `7F` and
+logs a per-block summary (`отказы 0x747: 12 subFunctionNotSupported x3 (...)`), and a
+refused UDS *batch* is re-read one DID at a time. Two different stories came out:
+
+* **UDS blocks were losing whole batches to one bad DID.** BSM `0x747` went from 12 values
+  to **69 of 71** with zero refusals, the door module `0x731` from 1 to 11 of 11. The
+  measurement DIDs were never blocked - `22D440` reads fine: `MP_COMMANDE_FEU_ROUTE_G/D` = 0
+  with the high beam off, DRL command 91, alternator excitation 9.2 V, oil-level sensor
+  759 mV. The MITM verification readout exists. Cost: the BSM excursion is 4.6 s instead of
+  2.5 because of the single reads; at one visit per 5 min that is fine. The door module is
+  back in the schedule at 900 s.
+* **KWP refusals are the firmware's ceiling.** Engine `21C78001` and `21D88001` (92
+  parameters, among them `MP_TEMP_EAU_NON_CORRIGEE` and oil pressure), ABS `21C18001`,
+  `21C28001`, `34A0`, GEP `2187` - all `7F 21 12` subFunctionNotSupported. That is "this
+  record does not exist in this build", not a session or security gate, so no session
+  change will unlock them. 118 / 18 / 18 are the real totals for those blocks, and the
+  uncorrected-coolant comparison mentioned above cannot be done on this ECU.
 
 `drive.py --ecus 6A8 --ecu-every 300` makes the collector leave the BSI every five minutes,
 enter another block, read its catalogue, and come back. Two things shape that design.
