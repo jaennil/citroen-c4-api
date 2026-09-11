@@ -426,7 +426,7 @@ def row(pid, title, gy, collapsed=False, panels=None):
 
 
 # единицы каталога -> единицы Grafana
-UNIT_MAP = {"°C": "celsius", "V": "volt", "%": "percent", "km": "lengthkm",
+UNIT_MAP = {"°C": "celsius", "V": "volt", "%": "percent", "km": "suffix: км",
             "km/h": "velocitykmh", "Rpm": "rotrpm", "ms": "ms", "L": "litre",
             "month(s)": "", "A": "amp", "Nm": "", "s": "s"}
 
