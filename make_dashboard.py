@@ -428,6 +428,7 @@ def row(pid, title, gy, collapsed=False, panels=None):
 
 # единицы каталога -> единицы Grafana
 UNIT_MAP = {"°C": "celsius", "V": "volt", "%": "percent", "km": "suffix: км",
+            "Ohms": "ohm", "mV": "mvolt", "bar": "pressurebar", "rpm": "rotrpm",
             "km/h": "velocitykmh", "Rpm": "rotrpm", "ms": "ms", "L": "litre",
             "month(s)": "", "A": "amp", "Nm": "", "s": "s"}
 
@@ -968,22 +969,38 @@ def build():
                              "видно колесо, которое стоит отдельно от остальных - датчик ABS.")
     panels.append(wheels); pid += 1; y += 8
 
-    FLAGS = ["ESP81:MP_NIVEAU_LIQUIDE_DE_FREIN", "BSM_2010:MP_ALERTE_PRESSION_HUILE_MOTEUR_a",
-             "BSM_2010:MP_ALERTE_NIVEAU_EAU_MOTEUR", "BSM_2010:MP_NIVEAU_LIQUIDE_LAVE_GLACE",
-             "BSM_2010:MP_TENSION_CAPTEUR_NIVEAU_HUILE_MOTEUR",
-             "RBG_UDS:MP_COMPTEUR_DE_CHOCS", "RBG_UDS:MP_ETAT_COMMUTATEUR_NEUTRALISATION_COUSSIN_PASSAGER",
-             "RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_CONDUCTEUR_NIVEAU_1",
-             "RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_PASSAGER_NIVEAU_1",
-             "RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_LATERAL_AVANT_GAUCHE",
-             "RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_LATERAL_AVANT_DROIT",
-             "RBG_UDS:MP_RESISTANCE_LIGNE_PRETENSIONNEUR_AVANT_GAUCHE",
-             "RBG_UDS:MP_RESISTANCE_LIGNE_PRETENSIONNEUR_AVANT_DROIT"]
-    flags = latest_table(pid, "Лампы, уровни и цепи подушек: текущие значения", FLAGS,
-                         gh=3 + len(FLAGS), gy=y)
-    flags["description"] = ("Уровни и лампы - 0 в норме, 1 сработало. Цепи подушек и "
-                            "преднатяжителей - сопротивление пиропатрона с проводкой, норма "
-                            "1.5-4.5 Ом. Счётчик срабатываний подушек должен быть 0.")
-    panels.append(flags); pid += 1; y += 3 + len(FLAGS)
+    LAMPS = ["ESP81:MP_NIVEAU_LIQUIDE_DE_FREIN", "BSM_2010:MP_ALERTE_PRESSION_HUILE_MOTEUR_a",
+             "BSM_2010:MP_ALERTE_NIVEAU_EAU_MOTEUR", "BSM_2010:MP_NIVEAU_LIQUIDE_LAVE_GLACE"]
+    lamps = panel(pid, "Лампы и уровни (1 = сработало)", 0, y, 12, 8, [target(LAMPS)], "")
+    lamps["fieldConfig"]["defaults"]["custom"]["lineInterpolation"] = "stepAfter"
+    lamps["description"] = ("Тормозная жидкость ниже минимума, лампа давления масла, лампа "
+                            "уровня ОЖ, омывайка. Всё в норме - четыре нуля.")
+    panels.append(lamps); pid += 1
+    panels.append(mini(pid, "Датчик уровня масла, напряжение",
+                       "BSM_2010:MP_TENSION_CAPTEUR_NIVEAU_HUILE_MOTEUR", 12, y, "mvolt",
+                       gw=12, gh=8)); pid += 1; y += 8
+
+    SQUIBS = ["RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_CONDUCTEUR_NIVEAU_1",
+              "RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_PASSAGER_NIVEAU_1",
+              "RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_LATERAL_AVANT_GAUCHE",
+              "RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_LATERAL_AVANT_DROIT",
+              "RBG_UDS:MP_RESISTANCE_LIGNE_PRETENSIONNEUR_AVANT_GAUCHE",
+              "RBG_UDS:MP_RESISTANCE_LIGNE_PRETENSIONNEUR_AVANT_DROIT",
+              "RBG_UDS:MP_RESISTANCE_COMMUTATEUR_NEUTRALISATION_COUSSIN_PASSAGER"]
+    squibs = panel(pid, "Цепи подушек и преднатяжителей", 0, y, 12, 8, [target(SQUIBS[:6])], "ohm")
+    # зона одна на всех: пиропатрон с проводкой 1.5-4.5 Ом, поэтому пороги панели
+    # берём у любой из цепей
+    squibs = with_thresholds(squibs, SQUIBS[0])
+    squibs["description"] = ("Сопротивление пиропатрона с проводкой. Норма 1.5-4.5 Ом: ниже - "
+                             "замыкание, выше - плохой контакт или обрыв. Цепь выключателя подушки "
+                             "пассажира (400 Ом) вынесена в ряд подушек, у неё другая норма.")
+    panels.append(squibs); pid += 1
+    bags = panel(pid, "Подушки: счётчик срабатываний и выключатель пассажира", 12, y, 12, 8,
+                 [target(["RBG_UDS:MP_COMPTEUR_DE_CHOCS",
+                          "RBG_UDS:MP_ETAT_COMMUTATEUR_NEUTRALISATION_COUSSIN_PASSAGER"])], "")
+    bags["fieldConfig"]["defaults"]["custom"]["lineInterpolation"] = "stepAfter"
+    bags["description"] = "Счётчик должен быть 0. Выключатель 1 - подушка пассажира включена."
+    panels.append(bags); pid += 1; y += 8
 
     # --- коды неисправностей ---
     # Стоят выше обозревателя намеренно: если в машине что-то не так, это первое,
