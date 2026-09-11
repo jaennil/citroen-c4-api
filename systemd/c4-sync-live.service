@@ -1,0 +1,19 @@
+[Unit]
+Description=Живая досылка телеметрии Citroen C4, пока идёт сбор
+# Живёт ровно столько, сколько сбор: стартует вместе с ним (Wants в c4-telemetry),
+# останавливается, когда он остановился, и на выходе досылает хвост поездки.
+BindsTo=c4-telemetry.service
+After=c4-telemetry.service network-online.target
+
+[Service]
+Type=simple
+User=jaennil
+Group=jaennil
+WorkingDirectory=/home/jaennil/life/citroen/c4-can
+ExecStart=/home/jaennil/life/citroen/c4-can/sync-live.sh
+# Хвост поездки может быть десятками тысяч значений - дать ему уехать.
+TimeoutStopSec=150
+KillMode=mixed
+Restart=on-failure
+RestartSec=10
+Nice=10
