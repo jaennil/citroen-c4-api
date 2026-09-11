@@ -1120,3 +1120,14 @@ Two side findings from the same evening. `drive.py` had `import usb.core, usb.ut
 into `UnboundLocalError` the first time it was needed. And `capture-return.sh`'s `kill -INT`
 does not stop the root-owned sniffer: it kept appending to `return.log` for the next runs -
 handy this once, but check `pgrep -f sniff_lexia_full` after a capture.
+
+## Досылка встала: smallserial упёрся в 32767 (2026-09-11)
+
+`param.id` в Postgres был `smallserial`, а `INSERT ... ON CONFLICT (did) DO UPDATE` тратит
+значение счётчика на КАЖДУЮ строку при каждой досылке, даже если ничего не вставляет: 470
+параметров раз в 15 минут - и за три недели счётчик дошёл до потолка при 470 строках в
+таблице. Симптом: `SequenceGeneratorLimitExceeded` в журнале c4-sync, буфер вырос до 97 тыс.
+замеров, а панели новых блоков в Grafana были пустыми, хотя служба всё читала. Починено в
+`sync.py`: тип `integer` с одноразовой миграцией под `DO $$ ... $$` (переписывает reading,
+68 МБ, за секунды) и вставка только новых did с отдельным UPDATE ярлыка. Урок: любой
+"безобидный" upsert-всех-строк на serial-ключе - это утечка счётчика.
