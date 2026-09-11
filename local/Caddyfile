@@ -1,0 +1,8 @@
+# http://c4.local -> Grafana. Только http: в сети хотспота сертификата взять негде,
+# а автоматический TLS Caddy сюда не дотянется.
+{
+	auto_https off
+}
+:80 {
+	reverse_proxy grafana:3000
+}

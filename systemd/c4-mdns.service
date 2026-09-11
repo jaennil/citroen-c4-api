@@ -1,0 +1,13 @@
+[Unit]
+Description=Имя c4.local для локальной Grafana Citroen C4 (mDNS)
+After=avahi-daemon.service network-online.target
+Requires=avahi-daemon.service
+
+[Service]
+Type=simple
+ExecStart=/home/jaennil/life/citroen/c4-can/c4-mdns.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
