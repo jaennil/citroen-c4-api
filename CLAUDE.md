@@ -477,9 +477,18 @@ Plain text over the BLE UART is enough - `R1`/`R0` to force the beam, `S` for st
 own receipts" at the end). The paragraphs below about the excursion failing and about the
 `0x747` hop are the history of getting there; the hop table `ecu.KWP_EXIT_HOP` is empty and
 stays so. Other blocks (ABS `0x6AD`, GEP `0x6B5`, BSM `0x747`, ...) have entry sequences and
-catalogues and use the same code path, but have not been read since the fix: test with
-`drive.py --ignore-pause --ecus 6A8,6AD,6B5,747 --ecu-every 15 --db /tmp/t.db` before adding
-them to the unit. `drive.py` refuses blocks from `poll_all.SKIP_BLOCKS` (VCI).
+catalogues and use the same code path. **Verified 2026-09-11**: a sweep over all 12
+catalogued blocks (VCI excluded) with `--ecu-every 10` ran 6.5 minutes, 51 snapshots, 3 full
+rounds, zero errors, values repeatable round to round, service resumed by itself afterwards.
+Yield per block: engine 118, airbag 36, stalk 24/24, ABS 18, GEP 18, cluster 15, parking 14,
+display 13, BSM 12, panel 8, rain sensor 8, door module 1. The unit now rotates
+`6A8,6AD,6A8,747,...` with `--ecu-every 60`: engine every 2 min, each other block every ~20
+min, a ~2.5 s hole in the 2 Hz stream per minute. Door module `0x731` is left out - its one
+value is a serial number. `drive.py` refuses blocks from `poll_all.SKIP_BLOCKS` (VCI).
+
+Open: BSM `0x747` answers only its 12 identification DIDs; all 51 measurement DIDs, including
+`22D440` (high-beam command state needed to verify the MITM), are refused. The NRC was not
+logged; reading it is the next step before assuming the DIDs need an extended session.
 
 `drive.py --ecus 6A8 --ecu-every 300` makes the collector leave the BSI every five minutes,
 enter another block, read its catalogue, and come back. Two things shape that design.
