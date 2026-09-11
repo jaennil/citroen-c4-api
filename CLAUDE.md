@@ -484,7 +484,16 @@ Yield per block: engine 118, airbag 36, stalk 24/24, ABS 18, GEP 18, cluster 15,
 display 13, BSM 12, panel 8, rain sensor 8, door module 1. The unit now rotates
 `6A8,6AD,6A8,747,...` with `--ecu-every 60`: engine every 2 min, each other block every ~20
 min, a ~2.5 s hole in the 2 Hz stream per minute. Door module `0x731` is left out - its one
-value is a serial number. `drive.py` refuses blocks from `poll_all.SKIP_BLOCKS` (VCI).
+value is a serial number.
+
+**Scheduling, since 2026-09-11 evening: each block has its own interval.** `--ecus` takes
+`ADDR[:seconds]`; `--ecu-every` is the minimum gap between any two excursions and the default
+for blocks without their own value (0 still disables excursions entirely). Each tick the
+scheduler takes the most overdue block that is due. The unit runs engine 120 s, ABS and GEP
+600 s, BSM / stalk / cluster 1800 s, airbag / parking / rain / display / panel 3600 s - about
+53 excursions an hour against a 60 s minimum gap, so nothing starves. BSI hot parameters
+(rpm, speed, voltage, key, powertrain state, gear, oil temperature) stay at 2 Hz and the full
+BSI snapshot at 60 s, unchanged. Repeating an address in the list no longer does anything. `drive.py` refuses blocks from `poll_all.SKIP_BLOCKS` (VCI).
 
 Open: BSM `0x747` answers only its 12 identification DIDs; all 51 measurement DIDs, including
 `22D440` (high-beam command state needed to verify the MITM), are refused. The NRC was not
