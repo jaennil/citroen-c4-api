@@ -637,9 +637,10 @@ def join_titles(titles) -> str:
 
 
 def short_label(name: str) -> str:
-    """Заголовок панели: без приставки блока и по-русски, насколько выйдет."""
+    """Заголовок панели: по-русски из ecu_labels, автоперевод - только запас."""
+    import ecu_labels
     from ru_labels import humanise
-    return humanise(name.split(":", 1)[-1])
+    return ecu_labels.label(name) or humanise(name.split(":", 1)[-1])
 
 
 def build():
