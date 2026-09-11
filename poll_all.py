@@ -124,6 +124,24 @@ def uds_plan(params):
     return by_did, dict(need)
 
 
+# Коды отрицательного ответа (7F <сервис> <NRC>). Важно различать: 31 - параметра нет
+# в этой прошивке, 7F/7E - нужна другая сессия, 33 - защита доступом, 22 - условия
+# (обычно двигатель не в том состоянии), 12 - подфункция не поддерживается.
+NRC = {0x10: "generalReject", 0x11: "serviceNotSupported", 0x12: "subFunctionNotSupported",
+       0x13: "incorrectLength", 0x21: "busyRepeatRequest", 0x22: "conditionsNotCorrect",
+       0x24: "requestSequenceError", 0x31: "requestOutOfRange", 0x33: "securityAccessDenied",
+       0x35: "invalidKey", 0x78: "responsePending", 0x7E: "subFunctionNotSupportedInActiveSession",
+       0x7F: "serviceNotSupportedInActiveSession"}
+
+# Отказы последнего опроса по блокам: {tx: {запрос_или_DID: nrc}}. Заполняется
+# poll_ecu, читается теми, кто хочет понять, ЧТО именно отвергнуто и почему.
+LAST_REFUSED = {}
+
+
+def nrc_of(payload) -> int:
+    return payload[2] if payload and len(payload) >= 3 else -1
+
+
 def poll_ecu(lex, tx, rx, info, verbose=False, dead=None):
     """Прочитать всё, что можно, у одного блока. Возвращает {имя: (значение, ед.)}.
 
@@ -133,6 +151,8 @@ def poll_ecu(lex, tx, rx, info, verbose=False, dead=None):
     out, refused, silent = {}, 0, 0
     run_silent = 0
     fam = info["fam"]
+    refused_by = LAST_REFUSED.setdefault(tx, {})
+    refused_by.clear()
     if dead is None:
         dead = set()
     params = [p for p in info["params"] if p["req"] not in dead]
@@ -149,12 +169,32 @@ def poll_ecu(lex, tx, rx, info, verbose=False, dead=None):
             except Exception as e:
                 log.warning(f"  0x{tx:03X}: запрос сорвался ({type(e).__name__})")
                 continue
-            if payload and payload[0] == 0x7F:
+            if payload and payload[0] == 0x7F and len(chunk) > 1:
+                # Отказ на ПАЧКУ: один несуществующий DID (NRC 31) валит все десять.
+                # Раньше здесь считалось, что отказаны все, и блок реле выглядел
+                # немым на 51 параметр. Перечитываем по одному - дорого, но честно.
+                got = {}
+                for did in chunk:
+                    try:
+                        one, _ = lex.read(uds_payload([did]))
+                    except Exception as e:
+                        log.warning(f"  0x{tx:03X}: DID {did:04X} сорвался ({type(e).__name__})")
+                        continue
+                    if one and one[0] == 0x7F:
+                        refused += 1
+                        refused_by[f"{did:04X}"] = nrc_of(one)
+                    elif one:
+                        got.update(parse_multi(one, need))
+                    else:
+                        silent += 1
+            elif payload and payload[0] == 0x7F:
                 refused += len(chunk)
+                refused_by[f"{chunk[0]:04X}"] = nrc_of(payload)
                 continue
-            got = parse_multi(payload, need) if payload else {}
-            if not got:
-                silent += len(chunk)
+            else:
+                got = parse_multi(payload, need) if payload else {}
+                if not got:
+                    silent += len(chunk)
             for did, data in got.items():
                 for p in by_did[did]:
                     v = decode(p, data)
@@ -201,6 +241,7 @@ def poll_ecu(lex, tx, rx, info, verbose=False, dead=None):
         run_silent = 0
         if payload[0] == 0x7F:
             refused += len(ps)
+            refused_by[req] = nrc_of(payload)
             continue
         for p in ps:
             v = decode(p, payload)
@@ -208,6 +249,13 @@ def poll_ecu(lex, tx, rx, info, verbose=False, dead=None):
                 out[p["name"]] = (v, p["unit"])
     if verbose:
         log.info(f"  прочитано {len(out)}, отказ {refused}, молчание {silent}")
+    if refused_by:
+        by_nrc = {}
+        for k, n in refused_by.items():
+            by_nrc.setdefault(n, []).append(k)
+        parts = [f"{n:02X} {NRC.get(n, '?')} x{len(ks)} ({', '.join(ks[:6])}{', ...' if len(ks) > 6 else ''})"
+                 for n, ks in sorted(by_nrc.items())]
+        log.info(f"  отказы 0x{tx:03X}: " + "; ".join(parts))
     return out, refused, silent
 
 
