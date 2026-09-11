@@ -34,6 +34,7 @@ from ecu import enter
 from ecu_catalog import ECUS
 from lexia_proto import Lexia, parse_multi, plan_batches, read_multi_frame
 from poll_all import SKIP_BLOCKS, load_dead, poll_ecu, save_dead
+from schedule import MIN_GAP, SCHEDULE
 from storage import Store
 from telemetry import ALIASES, DRIVE_FULL_EVERY, DRIVE_HOT, decode, name_of
 
@@ -153,10 +154,11 @@ def main():
     # снимками ЭТОГО блока; без них берётся --ecu-every. Планировщик на каждом
     # такте берёт самый просроченный блок, так что двигатель можно читать каждые
     # две минуты, а подушки - раз в час, и список не надо раздувать повторами.
-    ap.add_argument("--ecus",
-                    default="6A8:120,6AD:600,6B5:600,747:1800,742:1800,75F:1800,"
-                            "744:3600,75D:3600,730:3600,765:3600,77B:3600",
-                    help="чужие блоки ADDR[:секунд] через запятую, hex; пусто - только BSI")
+    # Без --ecus работает расписание из schedule.py (задачи с наборами параметров
+    # и своими интервалами). --ecus ADDR[:секунд] - ручной список целых блоков
+    # для разовых проверок, он заменяет расписание.
+    ap.add_argument("--ecus", default="",
+                    help="ручной список блоков ADDR[:секунд], hex; пусто - расписание schedule.py")
     # ПОЛНАЯ вылазка по умолчанию ВЫКЛЮЧЕНА (0). Она кладёт интерфейс: проверено
     # трижды на машине, через 30-60 с после начала обхода двигателя приходит
     # USBTimeoutError, и дальше устройство отвечает USBError [Errno 5] на всё до
@@ -165,8 +167,8 @@ def main():
     # двигателя пишутся раз в минуту, а рискованный обход включается вручную
     # флагом --ecu-every 300, когда есть кому смотреть за результатом.
     ap.add_argument("--ecu-every", type=float, default=0.0,
-                    help="минимальный зазор между вылазками и интервал по умолчанию для "
-                         "блоков без своего :секунд; 0 - вылазки выключены")
+                    help="минимальный зазор между вылазками, с (расписание: MIN_GAP); "
+                         "для --ecus без :секунд - и их интервал; 0 - вылазки выключены")
     # Лёгкий замер тоже ВЫКЛЮЧЕН по умолчанию. Измерено: сбор BSI живёт устойчиво,
     # пока не случится вылазка в KWP-блок; после неё возврат на BSI падает и канал
     # рушится - неважно, была вылазка полной или лёгкой. Пока переход KWP -> UDS не
@@ -220,28 +222,42 @@ def main():
     log.info(f"горячих параметров {len(hot_dids)} с частотой {args.hot_hz} Гц, "
              f"полный снимок {len(all_dids)} раз в {args.full_every:.0f} с")
 
-    extra = {}          # (tx, rx) -> интервал, с
-    ecu_due = {}        # (tx, rx) -> когда блок снова пора снимать
-    for tok in (args.ecus or "").split(","):
-        tok = tok.strip()
-        if not tok:
-            continue
-        addr, _, secs = tok.partition(":")
-        want = int(addr, 16)
-        every = float(secs) if secs else args.ecu_every
+    # Задачи вылазок: блок + набор параметров + интервал. Источник - либо ручной
+    # --ecus (целые блоки), либо расписание schedule.py.
+    wanted = []
+    if args.ecus:
+        for tok in args.ecus.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            addr, _, secs = tok.partition(":")
+            wanted.append(dict(addr=int(addr, 16), every=float(secs) if secs else args.ecu_every,
+                               names=None, label=None))
+    elif args.ecu_every:
+        wanted = list(SCHEDULE)
+    tasks = []
+    for w in wanted:
+        want = w["addr"]
         key = next((k for k in ECUS if k[0] == want), None)
         if key is None:
             log.warning(f"блока 0x{want:03X} нет в каталоге - пропускаю")
-        elif want in SKIP_BLOCKS:
+            continue
+        if want in SKIP_BLOCKS:
             # VCI 0x6C8 воспроизводимо кладёт интерфейс (24 молчащих запроса подряд,
             # следующий блок уже не отвечает). Список один - poll_all.SKIP_BLOCKS.
             log.warning(f"блок 0x{want:03X} в списке пропуска - не трогаю")
-        else:
-            extra[key] = every
-            ecu_due[key] = 0.0
-            if args.ecu_every:
-                log.info(f"полный снимок 0x{key[0]:03X} {ECUS[key]['ru']} "
-                         f"({len(ECUS[key]['params'])} параметров) раз в {every:.0f} с")
+            continue
+        info = ECUS[key] if w["names"] is None else quick_info(ECUS[key], set(w["names"]))
+        label = w["label"] or ECUS[key]["ru"]
+        tasks.append(dict(key=key, every=w["every"], info=info, label=label, due=0.0))
+        if args.ecu_every:
+            log.info(f"вылазка 0x{key[0]:03X} {label}: {len(info['params'])} параметров, "
+                     f"{len(info.get('requests', []))} запросов, раз в {w['every']:.0f} с")
+    extra = {t["key"]: t["every"] for t in tasks}     # для лёгкого замера (QUICK)
+    gap = args.ecu_every if args.ecus else (MIN_GAP if args.ecu_every else 0.0)
+    if tasks:
+        per30 = sum(1800 / t["every"] for t in tasks)
+        log.info(f"вылазок за 30 минут по расписанию ~{per30:.0f}, зазор между ними {gap:.0f} с")
 
     dead_all = load_dead()
     log.info("запросов, помеченных молчащими: "
@@ -363,31 +379,32 @@ def main():
 
         # Проверка флага ещё и здесь: вылазка занимает до 15 с, и если начать её
         # с уже поставленным флагом, тот, кто просит USB, будет ждать всю вылазку.
-        due = [k for k in extra if t0 >= ecu_due[k]] if extra else []
-        if (args.ecu_every and due and t0 - last_ecu >= args.ecu_every
-                and not pause_requested()):
+        due = [t for t in tasks if t0 >= t["due"]]
+        if due and gap and t0 - last_ecu >= gap and not pause_requested():
             last_ecu = t0
-            # По ОДНОМУ блоку за вылазку - самый просроченный. Обойти все за раз -
-            # это минуты, в которые не идёт ничего другого. У каждого блока свой
-            # интервал (ADDR:секунд в --ecus), поэтому двигатель читается каждые
-            # две минуты, а подушки раз в час, без раздувания списка повторами.
-            tx, rx = min(due, key=lambda k: ecu_due[k])
-            ecu_due[(tx, rx)] = t0 + extra[(tx, rx)]
+            # По ОДНОЙ задаче за вылазку - самая просроченная. Обойти все за раз -
+            # это минуты, в которые не идёт ничего другого. У каждой задачи свой
+            # интервал (schedule.py), поэтому горячие параметры двигателя читаются
+            # каждые полторы минуты, а подушки раз в четверть часа.
+            task = min(due, key=lambda t: t["due"])
+            task["due"] = t0 + task["every"]
+            tx, rx = task["key"]
+            info = task["info"]
             ecu_turn += 1
-            info = ECUS[(tx, rx)]
             try:
                 enter(lex, tx, rx)
                 vals, refused, silent = poll_ecu(lex, tx, rx, info)
                 store.write([(0, f"{info['fam']}:{n}", u, v)
                              for n, (v, u) in vals.items()], ts=time.time())
                 n_ecu += len(vals)
-                log.info(f"снимок {info['ru']}: {len(vals)} значений "
+                log.info(f"снимок {task['label']}: {len(vals)} значений "
                          f"(отказ {refused}, молчание {silent})")
             except usb.core.USBError as e:
                 # Устройство залипло: дальше сорвётся и обычный опрос BSI, поэтому
                 # переподключаемся, а вылазки на этот сеанс прекращаем.
-                log.warning(f"интерфейс перестал отвечать на {info['ru']} "
+                log.warning(f"интерфейс перестал отвечать на {task['label']} "
                             f"({type(e).__name__}) - вылазки отключены до перезапуска")
+                tasks = []
                 extra = {}
                 try:
                     lex.disconnect()
@@ -396,9 +413,10 @@ def main():
                 lex = None
                 continue
             except Exception as e:
-                # Блок не ответил - выкидываем только его, остальные не виноваты.
-                log.warning(f"снимок {info['ru']} не удался ({type(e).__name__}: {e}) - "
+                # Блок не ответил - выкидываем только его задачи, остальные не виноваты.
+                log.warning(f"снимок {task['label']} не удался ({type(e).__name__}: {e}) - "
                             f"этот блок больше не трогаю")
+                tasks = [t for t in tasks if t["key"] != (tx, rx)]
                 extra.pop((tx, rx), None)
             # Вернуть канал на BSI обязательно: иначе следующий же быстрый опрос
             # уйдёт в чужой блок и вернёт пустоту.
