@@ -1011,107 +1011,80 @@ def build():
     }])
     panels.append(explorer); pid += 1; y += 10
 
-    # --- тематические ряды ---
-    # Непрерывные величины показываем графиками, а дискретные состояния и
-    # конфигурацию - одной таблицей текущих значений: 256 булевых флагов в виде
-    # временных рядов нечитаемы и раздувают дашборд в разы.
-    TABLE_GROUPS = {"Состояния и флаги", "Конфигурация"}
+    # --- тематические ряды и чужие блоки: ВСЁ графиками, ряды свёрнуты ---------
+    # По просьбе владельца (11.09) таблицы текущих значений заменены графиками:
+    # даже флаг 0/1 и "константа" информативнее линией - видно, когда именно
+    # переключилось, а не только что сейчас. Цена - панелей стало ~260 вместо 156,
+    # поэтому эти ряды СВЁРНУТЫ: Grafana не шлёт запросы панелей внутри
+    # свёрнутого ряда, пока его не раскроют, и загрузка дашборда не превращается в
+    # сотни запросов к Postgres каждые 10 с. Верхние ряды с главным - открыты.
+    def graph_chunks(items, label_of, stepped):
+        """items: [(имя, единица)] -> панели-графики, до четырёх рядов в каждой,
+        сгруппированные по единице и порядку величины; у параметра с зонами -
+        своя панель. gridPos.y здесь относительный, ряд сдвинет."""
+        nonlocal pid
+        zoned = [it for it in items if steps_for(it[0])]
+        rest = [it for it in items if not steps_for(it[0])]
+        by_unit = {}
+        for it in rest:
+            by_unit.setdefault((str(it[1]), magnitude(it[0])), []).append(it)
+        chunks = [[z] for z in zoned]
+        for key in sorted(by_unit):
+            grp = by_unit[key]
+            chunks += [grp[j:j + 4] for j in range(0, len(grp), 4)]
+        out = []
+        for i, chunk in enumerate(chunks):
+            unit = UNIT_MAP.get(chunk[0][1], "")
+            gx, gy = (i % 2) * 12, (i // 2) * 8
+            if len(chunk) == 1 and steps_for(chunk[0][0]):
+                pan = mini(pid, title_for(chunk[0][0], label_of(chunk[0][0])[:40]),
+                           chunk[0][0], gx, gy, unit, gw=12, gh=8)
+            else:
+                pan = panel(pid, join_titles(label_of(n) for n, _ in chunk),
+                            gx, gy, 12, 8, [target([n for n, _ in chunk])], unit)
+            if stepped:
+                # флаги и конфигурация: ступеньки, а не наклонные линии между 0 и 1
+                pan["fieldConfig"]["defaults"]["custom"]["lineInterpolation"] = "stepAfter"
+            out.append(pan)
+            pid += 1
+        return out
+
+    def collapsed_row(title, sub):
+        """Ряд с панелями. Маленькие ряды (до 12 панелей) открыты, большие свёрнуты:
+        сворачивать пять графиков температур незачем, а 92 панели флагов - надо."""
+        nonlocal pid, y
+        fold = len(sub) > 12
+        r = row(pid, title, y, collapsed=fold)
+        pid += 1
+        y += 1
+        for p in sub:
+            p["gridPos"]["y"] += y
+        if fold:
+            r["panels"] = sub
+            panels.append(r)
+        else:
+            panels.append(r)
+            panels.extend(sub)
+            y += 8 * ((len(sub) + 1) // 2)
+
+    STEPPED = {"Состояния и флаги", "Конфигурация"}
     for title, items in categorise().items():
         if not items:
             continue
-        panels.append(row(pid, f"{title} ({len(items)})", y))
-        pid += 1
-        y += 1
+        sub = graph_chunks([(n, u) for n, u, _ in items], human_name, title in STEPPED)
+        collapsed_row(f"{title} ({len(items)})", sub)
 
-        if title in TABLE_GROUPS:
-            # Высота по числу строк: под 243 флага нужна прокрутка внутри панели,
-            # а под один параметр конфигурации таблица в 16 единиц - пустое место.
-            gh = max(5, min(16, 3 + len(items)))
-            panels.append(latest_table(pid, f"{title}: текущие значения",
-                                       [n for n, _, _ in items], gh=gh, gy=y))
-            pid += 1
-            y += gh
-            continue
-
-        # Сначала разбиваем по единицам измерения и порядку величины: иначе в одну
-        # панель попадают пробег в 195000 км и "дней до ТО", и второе не видно.
-        # У кого есть границы нормы - тому отдельный график. В общей панели на
-        # четыре параметра зона бессмысленна: заливка и пороговые линии в
-        # Grafana относятся к панели целиком, а не к ряду, и на четырёх рядах
-        # покрасили бы заодно и соседей с другими нормами.
-        zoned = [it for it in items if steps_for(it[0])]
-        rest = [it for it in items if not steps_for(it[0])]
-
-        by_unit = {}
-        for it in rest:
-            by_unit.setdefault((it[1], magnitude(it[0])), []).append(it)
-        chunks = [[z] for z in zoned]
-        for key in sorted(by_unit, key=lambda k: (k[0], k[1])):
-            grp = by_unit[key]
-            chunks += [grp[j:j + 4] for j in range(0, len(grp), 4)]
-
-        # по две панели в строку, высота 8 - та же, что в gridPos ниже. Раньше
-        # шаг был 7 при высоте 8, и панели наезжали друг на друга.
-        for i, chunk in enumerate(chunks):
-            unit = UNIT_MAP.get(chunk[0][1], "")
-            # заголовок панели - из ручных имён; DID обязателен, иначе ru_label
-            # не найдёт запись и свалится в грубый автоперевод
-            if len(chunk) == 1 and steps_for(chunk[0][0]):
-                # mini: запрос вместе с подписанными линиями-границами
-                n, _, d = chunk[0]
-                pan = mini(pid, title_for(n, ru_label(d, n)[:40]), n,
-                           (i % 2) * 12, y + (i // 2) * 8, unit, gw=12, gh=8)
-            else:
-                pan = panel(pid, join_titles(ru_label(d, n) for n, _, d in chunk),
-                            (i % 2) * 12, y + (i // 2) * 8, 12, 8,
-                            [target([n for n, _, _ in chunk])], unit)
-            panels.append(pan)
-            pid += 1
-        y += 8 * ((len(chunks) + 1) // 2)
-
-    # --- чужие блоки: двигатель, BSM, ABS и остальные ---
     groups, fam_ru = ecu_sections()
     for fam in sorted(groups, key=lambda f: -len(groups[f])):
         items = sorted(groups[fam])
-        panels.append(row(pid, f"{fam_ru.get(fam, fam)} ({len(items)})", y))
-        pid += 1
-        y += 1
-
         varying = [(n, u) for n, u in items if not is_constant(n)]
         consts = [(n, u) for n, u in items if is_constant(n)]
-
-        # Графики только тем, что меняется. Группируем по единице измерения и по
-        # порядку величины - иначе милливольты лямбды и обороты попадут на одну ось.
-        zoned = [(n, u) for n, u in varying if steps_for(n)]
-        rest = [(n, u) for n, u in varying if not steps_for(n)]
-
-        by_unit = {}
-        for n, u in rest:
-            by_unit.setdefault((u, magnitude(n)), []).append((n, u))
-        chunks = [[z] for z in zoned]
-        for key in sorted(by_unit, key=lambda k: (str(k[0]), k[1])):
-            grp = by_unit[key]
-            chunks += [grp[j:j + 4] for j in range(0, len(grp), 4)]
-        for i, chunk in enumerate(chunks):
-            unit = UNIT_MAP.get(chunk[0][1], "")
-            if len(chunk) == 1 and steps_for(chunk[0][0]):
-                pan = mini(pid, title_for(chunk[0][0], short_label(chunk[0][0])[:40]),
-                           chunk[0][0],
-                           (i % 2) * 12, y + (i // 2) * 8, unit, gw=12, gh=8)
-            else:
-                pan = panel(pid, join_titles(short_label(n) for n, _ in chunk),
-                            (i % 2) * 12, y + (i // 2) * 8, 12, 8,
-                            [target([n for n, _ in chunk])], unit)
-            panels.append(pan)
-            pid += 1
-        y += 8 * ((len(chunks) + 1) // 2)
-
-        if consts:
-            gh = max(5, min(16, 3 + len(consts)))
-            panels.append(latest_table(pid, f"{fam_ru.get(fam, fam)}: постоянные значения",
-                                       [n for n, _ in consts], gh=gh, gy=y))
-            pid += 1
-            y += gh
+        sub = graph_chunks(varying, short_label, False)
+        below = graph_chunks(consts, short_label, True)
+        off = 8 * ((len(sub) + 1) // 2)
+        for p in below:
+            p["gridPos"]["y"] += off
+        collapsed_row(f"{fam_ru.get(fam, fam)} ({len(items)})", sub + below)
 
     return {
         "uid": "citroen-c4",
