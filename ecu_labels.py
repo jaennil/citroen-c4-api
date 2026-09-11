@@ -216,6 +216,7 @@ BY_FAMILY = {
         "MP_ETAT_RELAIS_ALIMENTATION_EV": "Реле питания клапанов ABS",
         "MP_ETAT_RELAIS_POMPE_RECIRCULATION_1": "Реле насоса ABS",
         "MP_NIVEAU_LIQUIDE_DE_FREIN": "Тормозная жидкость ниже минимума",
+        "MP_VITESSE_VEHICULE_a": "Скорость автомобиля (по ABS)",
         "MP_VITESSE_ROUE_ARRIERE_DROITE": "Скорость колеса, заднее правое",
         "MP_VITESSE_ROUE_ARRIERE_GAUCHE": "Скорость колеса, заднее левое",
         "MP_VITESSE_ROUE_AVANT_DROIT": "Скорость колеса, переднее правое",
@@ -230,6 +231,7 @@ BY_FAMILY = {
         "MP_TENSION_ALIMENTATION": "Питание электронасоса ГУР",
         "MP_VITESSE_MOTEUR_GEP": "Обороты электронасоса ГУР",
         "MP_VITESSE_VOLANT_DE_DIRECTION": "Скорость вращения руля",
+        "MP_VITESSE_VEHICULE_a": "Скорость автомобиля (по насосу ГУР)",
         "TYPE_ANGLE_VOLANT_DE_DIRECTION": "Тип датчика угла руля",
     },
     "RBG_UDS": {
