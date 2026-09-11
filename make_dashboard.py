@@ -923,6 +923,66 @@ def build():
     pid += 1
     y += 8
 
+    # --- другие блоки: главное -------------------------------------------------
+    # Собранные вручную панели по блокам, которые служба читает с 11.09: блок реле,
+    # ABS, насос ГУР, подушки. Полные автоматические ряды по каждому блоку идут
+    # ниже, а здесь - то, ради чего эти блоки вообще читаются. Русские имена и
+    # зоны - в norms.py, оттуда их берёт metric_sql.
+    panels.append(row(pid, "Другие блоки: главное", y, collapsed=False)); pid += 1; y += 1
+
+    LIGHTS = ["BSM_2010:MP_COMMANDE_FEU_ROUTE_G", "BSM_2010:MP_COMMANDE_FEU_ROUTE_D",
+              "BSM_2010:MP_COMMANDE_FEU_CROISEMENT_G", "BSM_2010:MP_COMMANDE_FEU_CROISEMENT_D"]
+    lights = panel(pid, "Свет: команды блока реле (1 = включено)", 0, y, 12, 8,
+                   [target(LIGHTS)], "")
+    lights["description"] = ("Что блок реле моторного отсека велит фарам. Это независимый "
+                             "контроль для перехватчика дальнего света на шине подрулевого: "
+                             "если перехват сработал, здесь дальний станет 1.")
+    lights["fieldConfig"]["defaults"]["custom"].update({"lineInterpolation": "stepAfter"})
+    panels.append(lights); pid += 1
+    drl = panel(pid, "Дневные ходовые огни, ШИМ", 12, y, 12, 8,
+                [target(["BSM_2010:MP_COMMANDE_FEU_DIURNE_DEDIE_G",
+                         "BSM_2010:MP_COMMANDE_FEU_DIURNE_DEDIE_D"])], "percent")
+    panels.append(drl); pid += 1; y += 8
+
+    volts = panel(pid, "Напряжения по блокам", 0, y, 12, 8,
+                  [target(["MP_TENSION_ALIMENTION_BSI",
+                           "V46_32:MP_TENSION_ALIMENTATION_CALCULATEUR_CONTROLE_MOTEUR",
+                           "GEP:MP_TENSION_ALIMENTATION",
+                           "BSM_2010:MP_TENSION_EXCITATION_ALTERNATEUR"])], "volt")
+    volts["description"] = ("Бортовое напряжение глазами четырёх блоков и линия возбуждения "
+                            "генератора. Расхождение между блоками - плохая масса или контакт; "
+                            "возбуждение к нулю при работающем двигателе - генератор не заряжает.")
+    panels.append(volts); pid += 1
+    panels.append(mini(pid, "Ток электронасоса ГУР", "GEP:INTENSITE_MESUREE", 12, y, "amp",
+                       gw=12, gh=8)); pid += 1; y += 8
+
+    panels.append(mini(pid, "Температура электронасоса ГУР", "GEP:MP_TEMPERATURE_GEP", 0, y,
+                       "celsius", gw=12, gh=8)); pid += 1
+    wheels = panel(pid, "Скорости колёс (ABS)", 12, y, 12, 8,
+                   [target(["ESP81:MP_VITESSE_ROUE_AVANT_GAUCHE", "ESP81:MP_VITESSE_ROUE_AVANT_DROIT",
+                            "ESP81:MP_VITESSE_ROUE_ARRIERE_GAUCHE", "ESP81:MP_VITESSE_ROUE_ARRIERE_DROITE"])],
+                   "velocitykmh")
+    wheels["description"] = ("Снимок раз в три минуты, динамику торможения так не увидеть. Зато "
+                             "видно колесо, которое стоит отдельно от остальных - датчик ABS.")
+    panels.append(wheels); pid += 1; y += 8
+
+    FLAGS = ["ESP81:MP_NIVEAU_LIQUIDE_DE_FREIN", "BSM_2010:MP_ALERTE_PRESSION_HUILE_MOTEUR_a",
+             "BSM_2010:MP_ALERTE_NIVEAU_EAU_MOTEUR", "BSM_2010:MP_NIVEAU_LIQUIDE_LAVE_GLACE",
+             "BSM_2010:MP_TENSION_CAPTEUR_NIVEAU_HUILE_MOTEUR",
+             "RBG_UDS:MP_COMPTEUR_DE_CHOCS", "RBG_UDS:MP_ETAT_COMMUTATEUR_NEUTRALISATION_COUSSIN_PASSAGER",
+             "RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_CONDUCTEUR_NIVEAU_1",
+             "RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_PASSAGER_NIVEAU_1",
+             "RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_LATERAL_AVANT_GAUCHE",
+             "RBG_UDS:MP_RESISTANCE_LIGNE_COUSSIN_LATERAL_AVANT_DROIT",
+             "RBG_UDS:MP_RESISTANCE_LIGNE_PRETENSIONNEUR_AVANT_GAUCHE",
+             "RBG_UDS:MP_RESISTANCE_LIGNE_PRETENSIONNEUR_AVANT_DROIT"]
+    flags = latest_table(pid, "Лампы, уровни и цепи подушек: текущие значения", FLAGS,
+                         gh=3 + len(FLAGS), gy=y)
+    flags["description"] = ("Уровни и лампы - 0 в норме, 1 сработало. Цепи подушек и "
+                            "преднатяжителей - сопротивление пиропатрона с проводкой, норма "
+                            "1.5-4.5 Ом. Счётчик срабатываний подушек должен быть 0.")
+    panels.append(flags); pid += 1; y += 3 + len(FLAGS)
+
     # --- коды неисправностей ---
     # Стоят выше обозревателя намеренно: если в машине что-то не так, это первое,
     # что надо увидеть. Пишутся сюда dtc_read.py --sqlite как параметры с именем
