@@ -88,6 +88,20 @@ def metric_sql(names):
            "\n       ELSE coalesce(p.label, p.name) END"
 
 
+def var_label_sql(names):
+    """Подпись в списке обозревателя: "блок: параметр" для чужих блоков, чтобы 683
+    имени были сгруппированы по блоку и одинаковые имена разных блоков различались."""
+    from ecu_catalog import ECUS
+    fam_ru = {info["fam"]: info["ru"] for info in ECUS.values()}
+    parts = []
+    for n in names:
+        fam = n.split(":", 1)[0]
+        lab = f"{fam_ru.get(fam, fam)}: {norms.title(n) or human_name(n)}"
+        parts.append("WHEN '%s' THEN '%s'" % (n.replace("'", "''"), lab.replace("'", "''")))
+    return "CASE p.name\n       " + "\n       ".join(parts) + \
+           "\n       ELSE coalesce(p.label, p.name) END"
+
+
 def target(names, ref="A"):
     return {
         "refId": ref,
@@ -269,6 +283,7 @@ THRESHOLD_LINES = {
 # Порядок именно такой - в ручных учтены расчёты по этой машине (объём бака,
 # интервал ТО, неверный масштаб напряжения покоя), и автоматика их не должна
 # затирать. norms.py добирает остальные физические величины.
+import enums
 import norms
 
 
@@ -427,6 +442,48 @@ def row(pid, title, gy, collapsed=False, panels=None):
 
 
 # единицы каталога -> единицы Grafana
+# Единицы каталога DiagBox грязные: вольт встречается как V, Volt(s), mV и mv, обороты
+# как Rpm и rpm, плюс мусор вроде "�S" и "mixture". Сначала поправки по имени (там,
+# где каталог врёт про саму единицу - найдено проходом по правдоподобию 12.09),
+# потом нормализация строки.
+UNIT_OVERRIDE = {
+    "V46_32:MP_PEDALE_ACCELERATEUR_1": "mvolt",      # каталог: V, значения 390..2290
+    "V46_32:MP_PEDALE_ACCELERATEUR_2": "mvolt",
+    "V46_32:MP_TENSION_ALIMENTATION_CAPTEURS_02": "mvolt",   # каталог: V, значение 5000
+    "V46_32:MP_APP_POS_MINI_PEDALE_1": "mvolt",      # каталог: %, значения 391
+    "V46_32:MP_APP_POS_MINI_PEDALE_2": "mvolt",
+    "V46_32:MP_COUPLE_MOTEUR_AVANCE": "",            # каталог: %, значения -32..40 - момент, не проценты
+    "V46_32:MP_COUPLE_MOTEUR_EFFECTIF_AIR": "",
+    "V46_32:MP_COUPLE_MOTEUR_EFFECTIF_AVANCE": "",
+    "V46_32:MP_COUPLE_VOLONTE_CONDUCTEUR": "",
+    "V46_32:MP_PRESSION_CIRCUIT_REFRIGERANT_a": "pressurebar",  # каталог: mbar, значение 3.7
+    "MP_NIVEAU_CARBURANT_AFFICHE": "percent",        # каталог: litres, 81 при баке 61 л - это проценты
+    "MP_ANNEE_AFFICHEE": "",                         # каталог: ms, значение 2026
+    "MP_COMPTEUR_TOPS_ROUE_ARD": "",                 # каталог: ms, это счётчик импульсов
+    "MP_COMPTEUR_TOPS_ROUE_ARG": "",
+    "MP_TEMPERATURE_EVAPORATEUR": "celsius",         # каталог: битая строка
+}
+UNIT_NORM = {
+    "°c": "celsius", "v": "volt", "volt(s)": "volt", "mv": "mvolt", "%": "percent",
+    "km": "suffix: км", "km/h": "velocitykmh", "rpm": "rotrpm", "ms": "ms", "s": "s",
+    "seconds": "s", "second": "s", "day(s)": "d", "month(s)": "suffix: мес",
+    "l": "litre", "litres": "litre", "litre": "litre", "l/100 kms": "suffix: л/100км",
+    "litres/100 km": "suffix: л/100км", "a": "amp", "w": "watt", "ohms": "ohm",
+    "mohms": "suffix: мОм", "bar": "pressurebar", "mbar": "pressurembar",
+    "kpa": "pressurekpa", "hpa": "pressurehpa", "°": "degree", "°/s": "suffix: °/с",
+    "° crankshaft": "suffix: ° КВ", "crankshaft°": "suffix: ° КВ", "kg/h": "suffix: кг/ч",
+    "m": "lengthm", "nm": "suffix: Н·м", "статус": "",
+}
+
+
+def gunit(name, unit):
+    """Единица Grafana для параметра: поправка по имени, иначе нормализованная строка
+    каталога, иначе пусто (Level, mixture, keys(s), мусор)."""
+    if name in UNIT_OVERRIDE:
+        return UNIT_OVERRIDE[name]
+    return UNIT_NORM.get((unit or "").strip().lower(), "")
+
+
 UNIT_MAP = {"°C": "celsius", "V": "volt", "%": "percent", "km": "suffix: км",
             "Ohms": "ohm", "mV": "mvolt", "bar": "pressurebar", "rpm": "rotrpm",
             "km/h": "velocitykmh", "Rpm": "rotrpm", "ms": "ms", "L": "litre",
@@ -1042,27 +1099,42 @@ def build():
         своя панель. gridPos.y здесь относительный, ряд сдвинет."""
         nonlocal pid
         zoned = [it for it in items if steps_for(it[0])]
-        rest = [it for it in items if not steps_for(it[0])]
+        coded = [it for it in items if not steps_for(it[0]) and enums.mappings(it[0])]
+        rest = [it for it in items if not steps_for(it[0]) and not enums.mappings(it[0])]
         by_unit = {}
         for it in rest:
             by_unit.setdefault((str(it[1]), magnitude(it[0])), []).append(it)
-        chunks = [[z] for z in zoned]
+        chunks = [[z] for z in zoned] + [[c] for c in coded]
         for key in sorted(by_unit):
             grp = by_unit[key]
             chunks += [grp[j:j + 4] for j in range(0, len(grp), 4)]
         out = []
         for i, chunk in enumerate(chunks):
-            unit = UNIT_MAP.get(chunk[0][1], "")
+            unit = gunit(chunk[0][0], chunk[0][1])
             gx, gy = (i % 2) * 12, (i // 2) * 8
             if len(chunk) == 1 and steps_for(chunk[0][0]):
                 pan = mini(pid, title_for(chunk[0][0], label_of(chunk[0][0])[:40]),
                            chunk[0][0], gx, gy, unit, gw=12, gh=8)
+            elif len(chunk) == 1 and enums.mappings(chunk[0][0]):
+                # код состояния с известной расшифровкой: полоса с подписями
+                pan = panel(pid, label_of(chunk[0][0]), gx, gy, 12, 8,
+                            [target([chunk[0][0]])], "", kind="state-timeline")
+                pan["fieldConfig"]["defaults"]["mappings"] = enums.mappings(chunk[0][0])
+                pan["fieldConfig"]["defaults"]["custom"] = {"fillOpacity": 70, "lineWidth": 0}
+                pan["options"] = {"showValue": "auto", "mergeValues": True, "rowHeight": 0.8,
+                                  "legend": {"showLegend": True, "displayMode": "list",
+                                             "placement": "bottom"},
+                                  "tooltip": {"mode": "single", "sort": "none"}}
             else:
                 pan = panel(pid, join_titles(label_of(n) for n, _ in chunk),
                             gx, gy, 12, 8, [target([n for n, _ in chunk])], unit)
-            if stepped:
-                # флаги и конфигурация: ступеньки, а не наклонные линии между 0 и 1
-                pan["fieldConfig"]["defaults"]["custom"]["lineInterpolation"] = "stepAfter"
+            if pan["type"] == "timeseries":
+                # редкие блоки дают точку раз в 3-15 минут: без точек линия между
+                # ними выглядит как непрерывный замер, которого не было
+                pan["fieldConfig"]["defaults"]["custom"]["showPoints"] = "auto"
+                if stepped:
+                    # флаги и конфигурация: ступеньки, а не наклонные линии между 0 и 1
+                    pan["fieldConfig"]["defaults"]["custom"]["lineInterpolation"] = "stepAfter"
             out.append(pan)
             pid += 1
         return out
@@ -1092,9 +1164,25 @@ def build():
         sub = graph_chunks([(n, u) for n, u, _ in items], human_name, title in STEPPED)
         collapsed_row(f"{title} ({len(items)})", sub)
 
+    # Что уже показано в ручном ряду "Другие блоки: главное" - в рядах блоков не
+    # повторяем, иначе "Ток электронасоса ГУР" встречается дважды и выглядит ошибкой.
+    shown = set(LIGHTS + LAMPS + SQUIBS + [
+        "BSM_2010:MP_COMMANDE_FEU_DIURNE_DEDIE_G", "BSM_2010:MP_COMMANDE_FEU_DIURNE_DEDIE_D",
+        "MP_TENSION_ALIMENTION_BSI", "V46_32:MP_TENSION_ALIMENTATION_CALCULATEUR_CONTROLE_MOTEUR",
+        "GEP:MP_TENSION_ALIMENTATION", "BSM_2010:MP_TENSION_EXCITATION_ALTERNATEUR",
+        "GEP:INTENSITE_MESUREE", "GEP:MP_TEMPERATURE_GEP",
+        "ESP81:MP_VITESSE_ROUE_AVANT_GAUCHE", "ESP81:MP_VITESSE_ROUE_AVANT_DROIT",
+        "ESP81:MP_VITESSE_ROUE_ARRIERE_GAUCHE", "ESP81:MP_VITESSE_ROUE_ARRIERE_DROITE",
+        "BSM_2010:MP_TENSION_CAPTEUR_NIVEAU_HUILE_MOTEUR",
+        "RBG_UDS:MP_COMPTEUR_DE_CHOCS", "RBG_UDS:MP_ETAT_COMMUTATEUR_NEUTRALISATION_COUSSIN_PASSAGER"])
     groups, fam_ru = ecu_sections()
+    ident = []
     for fam in sorted(groups, key=lambda f: -len(groups[f])):
-        items = sorted(groups[fam])
+        items = sorted(n_u for n_u in groups[fam] if n_u[0] not in shown)
+        # номера блоков, версии ПО, серийники - не временные ряды; все блоки одной
+        # таблицей внизу вместо восьми панелей "Версия ПО"
+        ident += [(n, u) for n, u in items if is_identifier(n)]
+        items = [(n, u) for n, u in items if not is_identifier(n)]
         varying = [(n, u) for n, u in items if not is_constant(n)]
         consts = [(n, u) for n, u in items if is_constant(n)]
         sub = graph_chunks(varying, short_label, False)
@@ -1103,6 +1191,11 @@ def build():
         for p in below:
             p["gridPos"]["y"] += off
         collapsed_row(f"{fam_ru.get(fam, fam)} ({len(items)})", sub + below)
+    if ident:
+        panels.append(row(pid, f"Идентификация блоков ({len(ident)})", y, collapsed=True)); pid += 1
+        tbl = latest_table(pid, "Номера, версии ПО и серийные номера всех блоков",
+                           [n for n, _ in ident], gh=max(6, min(24, 3 + len(ident))), gy=y + 1)
+        panels[-1]["panels"] = [tbl]; pid += 1; y += 1
 
     return {
         "uid": "citroen-c4",
@@ -1150,7 +1243,7 @@ def build():
             # дашборда писала в журнал Grafana status=400 - нашлось только прогоном
             # всех 161 запросов через /api/ds/query изнутри пода.
             "query": ("SELECT "
-                      + metric_sql([n for n in sorted(STATS) if ":" in n])
+                      + var_label_sql([n for n in sorted(STATS) if ":" in n])
                       + " AS \"__text\", p.name AS \"__value\" FROM param p ORDER BY 1"),
             "multi": True,
             "includeAll": False,
