@@ -1136,7 +1136,7 @@ def build():
         }]},
         "timezone": "browser",
         "schemaVersion": 39,
-        "refresh": "30s",
+        "refresh": "10s",
         # 1 - общий курсор на всех панелях, чтобы читать значения в один момент времени
         "graphTooltip": 1,
         "time": {"from": "now-24h", "to": "now"},
