@@ -1152,10 +1152,14 @@ def build():
             # поле label - старый автоперевод. У BSI оно верное, взято из ручной
             # таблицы по DID, и подставлять все 400 имён в запрос незачем -
             # получалось 34 КБ SQL на одну загрузку дашборда.
+            # FROM param p - псевдоним обязателен: metric_sql пишет p.name и в ELSE
+            # p.label. Без него запрос переменной падал "missing FROM-clause entry
+            # for table p", обозреватель не заполнял список, и КАЖДАЯ загрузка
+            # дашборда писала в журнал Grafana status=400 - нашлось только прогоном
+            # всех 161 запросов через /api/ds/query изнутри пода.
             "query": ("SELECT "
-                      + metric_sql([n for n in sorted(STATS) if ":" in n]
-                                   ).replace("p.name", "name")
-                      + " AS \"__text\", name AS \"__value\" FROM param ORDER BY 1"),
+                      + metric_sql([n for n in sorted(STATS) if ":" in n])
+                      + " AS \"__text\", p.name AS \"__value\" FROM param p ORDER BY 1"),
             "multi": True,
             "includeAll": False,
             "refresh": 1,
