@@ -38,6 +38,12 @@ PY
 [ "${PENDING:-0}" -gt 0 ] || [ "${FORCE:-0}" = 1 ] || { echo "отправлять нечего"; exit 0; }
 echo "к отправке: $PENDING значений"
 
+# Живой режим (sync-live.sh) держит свой туннель и шлёт каждые 10 с; второй
+# туннель убил бы его port-forward на сервере. Уступаем, он дошлёт сам.
+if [ "${FORCE:-0}" != 1 ] && systemctl is-active --quiet c4-sync-live 2>/dev/null; then
+  echo "живая досылка активна - уступаю ей"; exit 0
+fi
+
 SSH_OPTS=(-n -i "$SSH_KEY" -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5)
 
 # Сначала одна короткая проверка достижимости. Без неё вне домашней сети скрипт
@@ -72,7 +78,7 @@ for attempt in 1 2 3; do
     sleep 1
   done
 
-  if [ "$ready" = 1 ] && "$HERE/.venv/bin/python" "$HERE/sync.py" --sqlite "$DB"; then
+  if [ "$ready" = 1 ] && flock -w 60 /tmp/c4-sync.lock "$HERE/.venv/bin/python" "$HERE/sync.py" --sqlite "$DB"; then
     exit 0
   fi
 

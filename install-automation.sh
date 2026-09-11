@@ -7,6 +7,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 install -m 644 "$HERE/systemd/c4-telemetry.service" /etc/systemd/system/
 install -m 644 "$HERE/systemd/c4-sync.service"      /etc/systemd/system/
+install -m 644 "$HERE/systemd/c4-sync-live.service" /etc/systemd/system/
 install -m 644 "$HERE/systemd/c4-sync.timer"        /etc/systemd/system/
 install -m 644 "$HERE/70-psa-diag.rules"            /etc/udev/rules.d/
 
