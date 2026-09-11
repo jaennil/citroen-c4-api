@@ -10,7 +10,8 @@ User=jaennil
 Group=jaennil
 WorkingDirectory=/home/jaennil/life/citroen/c4-can
 ExecStart=/home/jaennil/life/citroen/c4-can/.venv/bin/python \
-    /home/jaennil/life/citroen/c4-can/drive.py --exit-after-idle 90 --ecus 6A8 --ecu-every 300
+    /home/jaennil/life/citroen/c4-can/drive.py --exit-after-idle 90 --ecu-every 60 \
+    --ecus 6A8,6AD,6A8,747,6A8,742,6A8,75F,6A8,744,6A8,75D,6A8,730,6A8,6B5,6A8,765,6A8,77B
 # Вынул Lexia и воткнул обратно - служба поднимется снова по udev;
 # упала по любой другой причине - перезапустится сама.
 Restart=on-failure
