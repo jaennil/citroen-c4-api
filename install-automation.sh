@@ -18,6 +18,12 @@ systemctl enable --now c4-sync.timer
 # имя c4.local для локальной Grafana: avahi публикует, c4-mdns следит за адресом
 systemctl enable --now avahi-daemon.service
 systemctl enable --now c4-mdns.service
+# Чтобы .local резолвился и на самом ноутбуке (Firefox ходит через glibc), нужен
+# модуль nss-mdns: в nsswitch.conf он уже прописан (mdns_minimal), но без пакета
+# glibc его молча пропускает. Телефону это не нужно, у него свой Bonjour.
+if [ ! -e /usr/lib/libnss_mdns_minimal.so.2 ]; then
+  echo "ВНИМАНИЕ: нет nss-mdns - c4.local не откроется с этого ноутбука: sudo pacman -S --needed nss-mdns"
+fi
 udevadm control --reload
 udevadm trigger --subsystem-match=usb --attr-match=idVendor=103a
 

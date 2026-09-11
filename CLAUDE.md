@@ -1159,7 +1159,9 @@ Grafana (анонимный просмотр, алерты выключены, �
 порту 80, который проксирует в Grafana. Имя `c4.local` публикует `c4-mdns.service`
 (`c4-mdns.sh`: `avahi-publish -a -R` на текущий адрес wlp2s0, перезапуск при смене
 адреса) поверх `avahi-daemon`; телефон в том же хотспоте открывает `http://c4.local`
-без порта. Дашборд тот же самый JSON из
+без порта. На самом ноутбуке `.local` резолвится только с пакетом `nss-mdns`: в
+`nsswitch.conf` модуль `mdns_minimal` был прописан заранее, но пакета не стояло, и glibc
+молча пропускал его - `avahi-resolve` отвечал, `getent hosts` и Firefox нет. Дашборд тот же самый JSON из
 `make_dashboard.py`, без правок: источник данных провижинится с тем же uid
 `citroen-postgres`, что в кластере, поэтому один дашборд работает в обоих местах.
 `local/up.sh` генерирует JSON в `local/dashboards/` (в .gitignore) и делает `compose up`.
