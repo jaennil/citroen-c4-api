@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 PG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS param (
-    id    smallserial PRIMARY KEY,
+    id    serial PRIMARY KEY,
     did   integer NOT NULL UNIQUE,
     name  text NOT NULL,
     unit  text,
@@ -35,9 +35,23 @@ CREATE TABLE IF NOT EXISTS param (
 ALTER TABLE param ADD COLUMN IF NOT EXISTS label text;
 CREATE TABLE IF NOT EXISTS reading (
     ts       timestamptz NOT NULL,
-    param_id smallint NOT NULL REFERENCES param(id),
+    param_id integer NOT NULL REFERENCES param(id),
     value    double precision NOT NULL
 );
+-- Миграция 2026-09-11: id был smallserial, и счётчик упёрся в 32767 при 470
+-- параметрах - INSERT ... ON CONFLICT DO UPDATE тратит значение nextval на КАЖДУЮ
+-- строку при каждой досылке, даже когда ничего не вставляет. Досылка вставала с
+-- SequenceGeneratorLimitExceeded, буфер рос. Расширяем тип один раз и дальше не
+-- трогаем; таблица reading на 68 МБ переписывается за секунды.
+DO $$
+BEGIN
+    IF (SELECT data_type FROM information_schema.columns
+        WHERE table_name = 'param' AND column_name = 'id') = 'smallint' THEN
+        ALTER TABLE reading ALTER COLUMN param_id TYPE integer;
+        ALTER TABLE param ALTER COLUMN id TYPE integer;
+        ALTER SEQUENCE param_id_seq AS integer MAXVALUE 2147483647;
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_reading_param_ts ON reading (param_id, ts DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reading_dedup ON reading (param_id, ts);
 CREATE TABLE IF NOT EXISTS event (
@@ -114,12 +128,22 @@ def main():
                 # справочник параметров
                 params = {(did, name, unit, lab)
                           for _, _, did, name, unit, _, lab in rows}
-                cur.executemany(
-                    "INSERT INTO param(did,name,unit,label) VALUES (%s,%s,%s,%s) "
-                    "ON CONFLICT (did) DO UPDATE SET label = EXCLUDED.label",
-                    sorted(params))
+                # Вставляем только НОВЫЕ did: ON CONFLICT DO UPDATE на всех сжигал
+                # значение счётчика id на каждую строку при каждой досылке и за
+                # три недели довёл smallserial до потолка. Ярлык обновляем
+                # отдельно и только если он изменился.
                 cur.execute("SELECT did, id FROM param")
                 pid = dict(cur.fetchall())
+                fresh = sorted(p for p in params if p[0] not in pid)
+                if fresh:
+                    cur.executemany(
+                        "INSERT INTO param(did,name,unit,label) VALUES (%s,%s,%s,%s) "
+                        "ON CONFLICT (did) DO NOTHING", fresh)
+                    cur.execute("SELECT did, id FROM param")
+                    pid = dict(cur.fetchall())
+                cur.executemany(
+                    "UPDATE param SET label = %s WHERE did = %s AND label IS DISTINCT FROM %s",
+                    [(lab, did, lab) for did, _, _, lab in sorted(params)])
                 # сами значения; повтор по (param_id, ts) молча игнорируется
                 cur.executemany(
                     "INSERT INTO reading(ts, param_id, value) "
