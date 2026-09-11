@@ -1,0 +1,21 @@
+apiVersion: 1
+datasources:
+  # Тот же uid, что в кластере (homelab-infra/monitoring/grafana/configmaps.yaml):
+  # дашборд ссылается на источник по uid, поэтому один и тот же JSON работает и там,
+  # и здесь без правок.
+  - name: Citroen C4
+    uid: citroen-postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: car
+    secureJsonData:
+      password: car
+    jsonData:
+      database: car
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: false
+      maxOpenConns: 5
+    editable: false
+    isDefault: true

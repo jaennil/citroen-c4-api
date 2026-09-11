@@ -2,7 +2,7 @@
 Description=Сбор телеметрии Citroen C4 через Lexia 3
 Documentation=file:///home/jaennil/life/citroen/c4-can/CLAUDE.md
 # Вместе со сбором поднимается живая досылка в кластер (см. sync-live.sh).
-Wants=c4-sync-live.service
+Wants=c4-sync-live.service c4-sync-local.service
 # Запускается правилом udev при подключении Lexia (70-psa-diag.rules).
 # Завершается сам, когда устройства нет 90 секунд - см. --exit-after-idle.
 

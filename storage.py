@@ -126,6 +126,22 @@ class Store:
             "FROM reading r JOIN param p ON p.id = r.param_id "
             "WHERE r.synced = 0 ORDER BY r.id LIMIT ?", (limit,)).fetchall()
 
+    def after(self, last_id: int, limit=5000):
+        """Замеры с id больше last_id - для получателя со своим водяным знаком.
+
+        Флаг synced принадлежит ОДНОМУ получателю, кластеру. Второму (локальному
+        Postgres для живой Grafana) флаг трогать нельзя, иначе кластер эти строки
+        не увидит, поэтому он ведёт свой last_id в файле состояния."""
+        return self.db.execute(
+            "SELECT r.id, r.ts, p.did, p.name, p.unit, r.value, p.label "
+            "FROM reading r JOIN param p ON p.id = r.param_id "
+            "WHERE r.id > ? ORDER BY r.id LIMIT ?", (last_id, limit)).fetchall()
+
+    def events_after(self, last_id: int):
+        return self.db.execute(
+            "SELECT id, ts, title, kind, details FROM event WHERE id > ? ORDER BY id",
+            (last_id,)).fetchall()
+
     def mark_synced(self, ids):
         self.db.executemany("UPDATE reading SET synced=1 WHERE id=?",
                             [(i,) for i in ids])

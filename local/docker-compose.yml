@@ -1,0 +1,50 @@
+# Локальная Grafana на ноутбуке: те же дашборды, что в кластере, но данные из
+# локального Postgres, куда sync-local.sh льёт замеры каждые 2 с без туннеля.
+# Задержка от машины до графика - секунды. Смотреть с телефона по хотспоту:
+# http://<ip ноутбука>:3000, вход без пароля (анонимный просмотр включён,
+# порт наружу торчит только в сеть хотспота).
+#
+#     ./local/up.sh          # поднять/обновить (генерирует дашборд и стартует)
+#     docker compose -f local/docker-compose.yml down
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: c4-postgres
+    environment:
+      POSTGRES_USER: car
+      POSTGRES_PASSWORD: car
+      POSTGRES_DB: car
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - c4-pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    container_name: c4-grafana
+    depends_on: [postgres]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_UNIFIED_ALERTING_ENABLED: "false"
+      GF_ALERTING_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_DASHBOARDS_MIN_REFRESH_INTERVAL: 2s
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/citroen.json
+    volumes:
+      - ./provisioning:/etc/grafana/provisioning
+      - ./dashboards:/var/lib/grafana/dashboards
+      - c4-grafana:/var/lib/grafana
+    restart: unless-stopped
+
+volumes:
+  c4-pgdata:
+  c4-grafana:

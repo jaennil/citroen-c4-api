@@ -1,0 +1,16 @@
+[Unit]
+Description=Досылка телеметрии Citroen C4 в локальный Postgres для локальной Grafana
+BindsTo=c4-telemetry.service
+After=c4-telemetry.service docker.service
+
+[Service]
+Type=simple
+User=jaennil
+Group=jaennil
+WorkingDirectory=/home/jaennil/life/citroen/c4-can
+ExecStart=/home/jaennil/life/citroen/c4-can/sync-local.sh
+TimeoutStopSec=60
+KillMode=mixed
+Restart=on-failure
+RestartSec=10
+Nice=10

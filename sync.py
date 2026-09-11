@@ -17,6 +17,7 @@ import logging
 import os
 import sys
 
+import json
 import psycopg
 
 from storage import Store
@@ -81,6 +82,9 @@ def main():
                     help="строка подключения, либо переменная CAR_PG")
     ap.add_argument("--batch", type=int, default=5000)
     ap.add_argument("--dry-run", action="store_true", help="только показать, что бы отправилось")
+    ap.add_argument("--state", default=None,
+                    help="файл водяного знака для ВТОРОГО получателя (локальный Postgres): "
+                         "слать по id, флаг synced не трогать")
     args = ap.parse_args()
 
     store = Store(args.sqlite)
@@ -117,11 +121,16 @@ def main():
                     "last_ts=EXCLUDED.last_ts, last_km=EXCLUDED.last_km, notes=EXCLUDED.notes",
                     rows)
             conn.commit()
-        if not st["pending"] and not st.get("events"):
+        state = {"reading": 0, "event": 0}
+        if args.state and os.path.exists(args.state):
+            with open(args.state) as f:
+                state.update(json.load(f))
+        if not args.state and not st["pending"] and not st.get("events"):
             log.info("схема на месте, отправлять нечего.")
             return 0
         while True:
-            rows = store.unsynced(args.batch)
+            rows = store.after(state["reading"], args.batch) if args.state \
+                else store.unsynced(args.batch)
             if not rows:
                 break
             with conn.cursor() as cur:
@@ -150,12 +159,17 @@ def main():
                     "VALUES (to_timestamp(%s), %s, %s) ON CONFLICT DO NOTHING",
                     [(ts, pid[did], val) for _, ts, did, _, _, val, _ in rows])
             conn.commit()
-            store.mark_synced([r[0] for r in rows])
+            if args.state:
+                state["reading"] = rows[-1][0]
+                with open(args.state, "w") as f:
+                    json.dump(state, f)
+            else:
+                store.mark_synced([r[0] for r in rows])
             sent += len(rows)
             log.info(f"  отправлено {sent}...")
 
         # события - отдельной таблицей, тоже идемпотентно по (ts, title)
-        evs = store.unsynced_events()
+        evs = store.events_after(state["event"]) if args.state else store.unsynced_events()
         if evs:
             with conn.cursor() as cur:
                 cur.executemany(
@@ -163,7 +177,12 @@ def main():
                     "VALUES (to_timestamp(%s), %s, %s, %s) ON CONFLICT DO NOTHING",
                     [(ts, t, k, d) for _, ts, t, k, d in evs])
             conn.commit()
-            store.mark_events_synced([e[0] for e in evs])
+            if args.state:
+                state["event"] = evs[-1][0]
+                with open(args.state, "w") as f:
+                    json.dump(state, f)
+            else:
+                store.mark_events_synced([e[0] for e in evs])
             log.info(f"  событий отправлено {len(evs)}")
 
     log.info(f"готово, отправлено {sent} значений.")
