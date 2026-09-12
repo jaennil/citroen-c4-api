@@ -14,7 +14,7 @@ UDS-блоки маленькие (10-40 параметров), их читае�
 Задача = блок + набор имён (None - весь каталог) + интервал в секундах.
 Планировщик в drive.py на каждом такте берёт самую просроченную задачу.
 За поездку в 30 минут: двигатель горячий 20 раз, ABS и ГУР по 10, полный
-двигатель, блок реле, подрулевой и щиток по 6, редкие блоки по 2.
+двигатель, блок реле, подрулевой и щиток по 6, редкие блоки по 1, коды двигателя 6.
 
 UDS-блоки читаются пачками по 10 DID; отвергнутая пачка перечитывается по одному
 (poll_all.poll_ecu), иначе один лишний DID скрывает девять рабочих - так блок реле
@@ -49,23 +49,38 @@ ENGINE_HOT = (
 # Двигатель чаще остальных: там лежат P0116 (цепь ДТОЖ, ждём снятия статуса после
 # замены датчика 09.09) и P2299 (педали, возвращается от манеры езды).
 SCHEDULE = [
-    dict(addr=0x6A8, every=600,  names=None, kind="dtc", label="коды двигателя"),
-    dict(addr=0x6B5, every=1800, names=None, kind="dtc", label="коды насоса ГУР"),
-    dict(addr=0x6AD, every=1800, names=None, kind="dtc", label="коды ABS/ESP"),
-    dict(addr=0x747, every=1800, names=None, kind="dtc", label="коды блока реле"),
-    dict(addr=0x752, every=1800, names=None, kind="dtc", label="коды BSI"),
-
+    # Порядок ВАЖЕН только на старте: при запуске все задачи просрочены (due=0), и
+    # планировщик берёт их в порядке списка, по одной раз в MIN_GAP. Поэтому первым
+    # идёт горячий набор двигателя - это то, ради чего всё затевалось, - а следом
+    # коды. Через полторы минуты после подключения Lexia прочитано и то, и другое.
     dict(addr=0x6A8, every=90,  names=ENGINE_HOT, label="двигатель, горячие"),
-    dict(addr=0x6A8, every=300, names=None,       label="двигатель, полный"),
-    dict(addr=0x6AD, every=180, names=None,       label="ABS/ESP"),
-    dict(addr=0x6B5, every=180, names=None,       label="электронасос ГУР"),
-    dict(addr=0x747, every=300, names=None,       label="блок реле"),
-    dict(addr=0x742, every=300, names=None,       label="подрулевой"),
-    dict(addr=0x75F, every=300, names=None,       label="щиток приборов"),
-    dict(addr=0x744, every=900, names=None,       label="подушки"),
-    dict(addr=0x75D, every=900, names=None,       label="парктроник"),
-    dict(addr=0x730, every=900, names=None,       label="датчик дождя и света"),
-    dict(addr=0x765, every=900, names=None,       label="дисплей"),
-    dict(addr=0x77B, every=900, names=None,       label="панель управления"),
-    dict(addr=0x731, every=900, names=None,       label="модуль двери"),
+
+    # Коды неисправностей. Дешевле обычного снимка: один запрос (17 FF 00 у KWP,
+    # 19 02 FF у UDS) вместо десятка, вылазка ~2 с. Поэтому читаем часто: двигатель
+    # раз в 5 минут (там P0116 и P2299), остальные блоки раз в четверть часа.
+    # Пишутся как DTC:<блок>:<код> со значением байта статуса, а кодам, которых в
+    # ответе нет, пишется ноль - иначе в Grafana вместо ряда получаются редкие точки
+    # и корреляцию с температурой или оборотами не построить.
+    dict(addr=0x6A8, every=300, names=None, kind="dtc", label="коды двигателя"),
+    dict(addr=0x6B5, every=900, names=None, kind="dtc", label="коды насоса ГУР"),
+    dict(addr=0x6AD, every=900, names=None, kind="dtc", label="коды ABS/ESP"),
+    dict(addr=0x747, every=900, names=None, kind="dtc", label="коды блока реле"),
+    dict(addr=0x752, every=900, names=None, kind="dtc", label="коды BSI"),
+
+    dict(addr=0x6A8, every=300, names=None, label="двигатель, полный"),
+    dict(addr=0x6AD, every=180, names=None, label="ABS/ESP"),
+    dict(addr=0x6B5, every=180, names=None, label="электронасос ГУР"),
+    dict(addr=0x747, every=300, names=None, label="блок реле"),
+    dict(addr=0x742, every=300, names=None, label="подрулевой"),
+    dict(addr=0x75F, every=300, names=None, label="щиток приборов"),
+
+    # Редкие блоки: почти всё внутри - константы (сопротивления цепей подушек,
+    # конфигурация парктроника, версии). Раз в полчаса достаточно, а освободившиеся
+    # места в расписании отданы кодам.
+    dict(addr=0x744, every=1800, names=None, label="подушки"),
+    dict(addr=0x75D, every=1800, names=None, label="парктроник"),
+    dict(addr=0x730, every=1800, names=None, label="датчик дождя и света"),
+    dict(addr=0x765, every=1800, names=None, label="дисплей"),
+    dict(addr=0x77B, every=1800, names=None, label="панель управления"),
+    dict(addr=0x731, every=1800, names=None, label="модуль двери"),
 ]
