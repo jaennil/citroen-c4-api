@@ -80,6 +80,32 @@ def did_length(did: int) -> int:
     return max((x["sb"] - 4) + x["ln"] for x in e) if e else 1
 
 
+def read_dtc(lex, tx, rx, info, store):
+    """Коды одного блока в базу телеметрии как временной ряд.
+
+    Пишем не только найденные коды, но и НОЛЬ для тех, что у этого блока уже
+    встречались раньше, а сейчас в ответе их нет. Без нулей в Grafana получаются
+    редкие точки вместо ряда: не видно ни когда код появился, ни когда ушёл, и
+    корреляцию с температурой или оборотами не построить.
+    """
+    from dtc_read import describe, read_block
+    codes, raw = read_block(lex, tx, rx)
+    if not codes and raw is not None and raw and raw[0] == 0x7F:
+        log.info(f"{info['ru']}: отказ на запрос кодов (NRC {raw[2]:02X})")
+        return 0
+    ts = time.time()
+    rows = [(0, f"DTC:{info['fam']}:{c}", "статус", float(st), describe(c, f, st, rw))
+            for c, f, st, rw in codes]
+    seen = {f"DTC:{info['fam']}:{c}" for c, _, _, _ in codes}
+    # известные коды этого блока, которых сейчас нет - ноль, "кода нет"
+    known = store.names_like(f"DTC:{info['fam']}:%")
+    rows += [(0, n, "статус", 0.0) for n in known if n not in seen]
+    store.write(rows, ts=ts)
+    log.info(f"коды {info['ru']}: {len(codes)} "
+             f"({', '.join(f'{c}{" активен" if st & 1 else ""}' for c, _, st, _ in codes) or 'нет'})")
+    return len(rows)
+
+
 def connect(settle=0.0):
     """Поднять связь с машиной. Возвращает Lexia или None.
 
@@ -249,7 +275,8 @@ def main():
             continue
         info = ECUS[key] if w["names"] is None else quick_info(ECUS[key], set(w["names"]))
         label = w["label"] or ECUS[key]["ru"]
-        tasks.append(dict(key=key, every=w["every"], info=info, label=label, due=0.0))
+        tasks.append(dict(key=key, every=w["every"], info=info, label=label, due=0.0,
+                          kind=w.get("kind", "params")))
         if args.ecu_every:
             log.info(f"вылазка 0x{key[0]:03X} {label}: {len(info['params'])} параметров, "
                      f"{len(info.get('requests', []))} запросов, раз в {w['every']:.0f} с")
@@ -392,13 +419,16 @@ def main():
             info = task["info"]
             ecu_turn += 1
             try:
-                enter(lex, tx, rx)
-                vals, refused, silent = poll_ecu(lex, tx, rx, info)
-                store.write([(0, f"{info['fam']}:{n}", u, v)
-                             for n, (v, u) in vals.items()], ts=time.time())
-                n_ecu += len(vals)
-                log.info(f"снимок {task['label']}: {len(vals)} значений "
-                         f"(отказ {refused}, молчание {silent})")
+                if task["kind"] == "dtc":
+                    n_ecu += read_dtc(lex, tx, rx, info, store)
+                else:
+                    enter(lex, tx, rx)
+                    vals, refused, silent = poll_ecu(lex, tx, rx, info)
+                    store.write([(0, f"{info['fam']}:{n}", u, v)
+                                 for n, (v, u) in vals.items()], ts=time.time())
+                    n_ecu += len(vals)
+                    log.info(f"снимок {task['label']}: {len(vals)} значений "
+                             f"(отказ {refused}, молчание {silent})")
             except usb.core.USBError as e:
                 # Устройство залипло: дальше сорвётся и обычный опрос BSI, поэтому
                 # переподключаемся, а вылазки на этот сеанс прекращаем.

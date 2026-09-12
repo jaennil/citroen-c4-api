@@ -39,7 +39,22 @@ ENGINE_HOT = (
     "MP_ETAT_RELAIS_GMV",
 )
 
+# Коды неисправностей. Читаются той же вылазкой, что и параметры: у KWP-блоков это
+# один запрос 17 FF 00, у UDS - 19 02 FF, то есть дешевле обычного снимка. Пишутся
+# как параметр DTC:<блок>:<код> со значением байта статуса, а КОДЫ, которых в ответе
+# нет, но которые раньше видели у этого блока, пишутся нулём - иначе в Grafana
+# получится не временной ряд, а редкие точки, и корреляцию с температурой или
+# оборотами построить нельзя.
+#
+# Двигатель чаще остальных: там лежат P0116 (цепь ДТОЖ, ждём снятия статуса после
+# замены датчика 09.09) и P2299 (педали, возвращается от манеры езды).
 SCHEDULE = [
+    dict(addr=0x6A8, every=600,  names=None, kind="dtc", label="коды двигателя"),
+    dict(addr=0x6B5, every=1800, names=None, kind="dtc", label="коды насоса ГУР"),
+    dict(addr=0x6AD, every=1800, names=None, kind="dtc", label="коды ABS/ESP"),
+    dict(addr=0x747, every=1800, names=None, kind="dtc", label="коды блока реле"),
+    dict(addr=0x752, every=1800, names=None, kind="dtc", label="коды BSI"),
+
     dict(addr=0x6A8, every=90,  names=ENGINE_HOT, label="двигатель, горячие"),
     dict(addr=0x6A8, every=300, names=None,       label="двигатель, полный"),
     dict(addr=0x6AD, every=180, names=None,       label="ABS/ESP"),

@@ -120,6 +120,12 @@ class Store:
         self.db.commit()
         return len(rows)
 
+    def names_like(self, pattern):
+        """Имена параметров по шаблону LIKE - чтобы знать, какие коды у блока уже
+        встречались, и писать им ноль, когда их в ответе нет."""
+        return [r[0] for r in self.db.execute(
+            "SELECT name FROM param WHERE name LIKE ?", (pattern,))]
+
     def unsynced(self, limit=5000):
         return self.db.execute(
             "SELECT r.id, r.ts, p.did, p.name, p.unit, r.value, p.label "

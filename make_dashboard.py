@@ -1040,6 +1040,23 @@ def build():
         panels.append(row(pid, f"Коды неисправностей ({len(dtc_names)})", y))
         pid += 1
         y += 1
+        # График истории: служба читает коды по расписанию (schedule.py, kind="dtc") и
+        # пишет ноль тем кодам, которых в ответе нет, поэтому это настоящий временной
+        # ряд - видно, когда код появился и когда ушёл, и можно класть рядом с
+        # температурой или оборотами, чтобы искать совпадения.
+        hist = panel(pid, "История кодов: когда появлялись и уходили", 0, y, 24, 9,
+                     [target(dtc_names)], "", kind="state-timeline")
+        hist["fieldConfig"]["defaults"]["mappings"] = enums.mappings("DTC:x")
+        hist["fieldConfig"]["defaults"]["custom"] = {"fillOpacity": 70, "lineWidth": 0}
+        hist["options"] = {"showValue": "auto", "mergeValues": True, "rowHeight": 0.85,
+                           "legend": {"showLegend": True, "displayMode": "list",
+                                      "placement": "bottom"},
+                           "tooltip": {"mode": "single", "sort": "none"}}
+        hist["description"] = ("Значение - байт статуса, ноль значит кода нет. Служба "
+                               "читает коды двигателя раз в 10 минут, остальные блоки раз "
+                               "в полчаса, поэтому появление кода видно с точностью до "
+                               "этого интервала.")
+        panels.append(hist); pid += 1; y += 9
         gh = max(5, min(14, 3 + len(dtc_names)))
         panels.append(latest_table(pid, "Найденные коды: блок, описание, статус",
                                    dtc_names, gh=gh, gy=y))
