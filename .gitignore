@@ -15,3 +15,4 @@ local/dashboards/citroen.json
 
 # промежуточный кэш выборки состояний, пересобирается за пару секунд
 states_raw.json
+dtc_gpc_raw.json
