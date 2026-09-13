@@ -16,7 +16,7 @@
       -> I_ECUDTC -> DTC
 
 Словарь POLUXDATA сразу РУССКИЙ, так что переводить, в отличие от inline-текстов
-DSD.FDB, ничего не нужно.
+DSD.FDB, ничего не нужно. Нумерация ссылок ведётся С ЕДИНИЦЫ - см. resolve().
 
     ./.venv/bin/python gen_dtc_gpc.py > dtc_gpc_ru.py
     ./.venv/bin/python gen_dtc_gpc.py --raw     # только ссылки, без словаря
@@ -59,7 +59,8 @@ WHERE e.ECUEDOFILENAME = '{edo}' AND d.DTCCODE IS NOT NULL;
 """
 
 SYSTEM = {0: "P", 1: "C", 2: "B", 3: "U"}
-REF = re.compile(r"@P(\d+)-POLUXDATA")
+# Ссылка бывает двух видов, @P и @F, но словарь и нумерация у них одни.
+REF = re.compile(r"@[PF](\d+)-POLUXDATA")
 
 
 def code_of(raw):
@@ -103,14 +104,22 @@ def resolve(label, dico):
     неразрешённая ссылка остаётся как есть и видна.
     """
     def sub(m):
+        # Нумерация в ссылках с ЕДИНИЦЫ. Прошлая попытка читала её как индекс с нуля
+        # и стабильно получала соседнюю строку - часто близкую по теме, отчего и
+        # выглядело правдоподобно: для P0116 вместо "Сигнал датчика температуры
+        # охлаждающей жидкости" выходило "Не обнаружено ни одного датчика".
         try:
-            return dico[int(m.group(1))]
+            return dico[int(m.group(1)) - 1]
         except (IndexError, KeyError, ValueError):
             return m.group(0)
     s = REF.sub(sub, label)
-    s = s.replace("@\\+", " ").replace("@T", " ")
-    s = re.sub(r"\s+", " ", s).strip(" .")
-    return s
+    # @T, @\+, @\*N - знаки разметки. Знаки препинания после @T это уже текст,
+    # поэтому убирается ровно маркер, а не хвост за ним.
+    s = re.sub(r"@\\\*\d*|@\\\+|@T", " ", s)
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"\s+([)\],.;:!?])", r"\1", s)      # пробел перед знаком после вырезки
+    s = re.sub(r"([(\[])\s+", r"\1", s)
+    return s.strip(" .:")
 
 
 def main():
