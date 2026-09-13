@@ -144,17 +144,23 @@ def describe(code: str, failure, status, raw=None) -> str:
 
 
 def read_block(lex, tx, rx):
-    """Коды одного блока. Возвращает список (код, тип_отказа, статус)."""
+    """Коды одного блока. Возвращает (список (код, тип_отказа, статус, raw), сырьё, ok).
+
+    ok РАЗЛИЧАЕТ два случая, которые раньше выглядели одинаково и стоили испорченной
+    истории: блок ответил и кодов действительно нет (ok=True, пустой список), и блок
+    промолчал или отказал (ok=False). Молчание здесь обычное дело - "тишина это
+    свойство состояния, а не запроса", - и записывать её как "коды пропали" нельзя.
+    """
     enter(lex, tx, rx)
     if is_kwp((tx, rx)):
         pl, _ = lex.read(b"\x17\xff\x00", deadline=8.0)
         if pl and pl[0] == 0x57:
-            return parse_kwp(pl), None
-        return [], pl
+            return parse_kwp(pl), None, True
+        return [], pl, False
     pl, _ = lex.read(b"\x19\x02\xff", deadline=8.0)
     if pl and pl[0] == 0x59:
-        return parse_uds(pl), None
-    return [], pl
+        return parse_uds(pl), None, True
+    return [], pl, False
 
 
 def main():
@@ -193,13 +199,13 @@ def main():
         for tx, rx in targets:
             info = ECUS[(tx, rx)]
             try:
-                codes, raw = read_block(lex, tx, rx)
+                codes, raw, ok = read_block(lex, tx, rx)
             except Exception as e:
                 print(f"\n0x{tx:03X} {info['ru']}: сорвалось ({type(e).__name__})")
                 continue
             print(f"\n0x{tx:03X} {info['ru']} ({'KWP' if is_kwp((tx, rx)) else 'UDS'})")
             if not codes:
-                print("    кодов нет" if raw is None or raw[0] != 0x7F
+                print("    кодов нет" if ok
                       else f"    отказ на запрос: NRC {raw[2]:02X}")
                 continue
             total += len(codes)

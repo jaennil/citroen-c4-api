@@ -89,14 +89,25 @@ def read_dtc(lex, tx, rx, info, store):
     корреляцию с температурой или оборотами не построить.
     """
     from dtc_read import describe, read_block
-    codes, raw = read_block(lex, tx, rx)
-    if not codes and raw is not None and raw and raw[0] == 0x7F:
-        log.info(f"{info['ru']}: отказ на запрос кодов (NRC {raw[2]:02X})")
+    codes, raw, ok = read_block(lex, tx, rx)
+    if not ok:
+        # Блок промолчал или отказал. НИЧЕГО не пишем: раньше сюда попадало молчание
+        # двигателя (обычное дело), и нули затирали живые коды - в истории P0116
+        # прыгал 1-0-1-0, хотя код никуда не девался.
+        why = f"отказ NRC {raw[2]:02X}" if raw and len(raw) > 2 and raw[0] == 0x7F else "молчит"
+        log.info(f"коды {info['ru']}: {why}, пропускаю")
         return 0
     ts = time.time()
-    rows = [(0, f"DTC:{info['fam']}:{c}", "статус", float(st), describe(c, f, st, rw))
+
+    def key(c, f):
+        # Тип отказа - часть кода, а не украшение: у PSA B1137 с типами 01/02/04 это
+        # три разные неисправности (обрыв, замыкание на массу, на плюс). Без него они
+        # схлопывались в одну строку и затирали друг друга.
+        return f"DTC:{info['fam']}:{c}" + (f"-{f:02X}" if f is not None else "")
+
+    rows = [(0, key(c, f), "статус", float(st), describe(c, f, st, rw))
             for c, f, st, rw in codes]
-    seen = {f"DTC:{info['fam']}:{c}" for c, _, _, _ in codes}
+    seen = {key(c, f) for c, f, _, _ in codes}
     # известные коды этого блока, которых сейчас нет - ноль, "кода нет"
     known = store.names_like(f"DTC:{info['fam']}:%")
     rows += [(0, n, "статус", 0.0) for n in known if n not in seen]

@@ -54,9 +54,10 @@ DID_OF = {e["name"]: e["did"] for e in CATALOG}
 def human_name(name: str) -> str:
     """Русское имя параметра по одному его имени, без DID на входе."""
     if name.startswith("DTC:"):
-        # у кода неисправности осмысленное имя - только описание из базы DiagBox,
-        # оно лежит в label и собрать его из мнемоники нельзя
-        return ""
+        # Сам код: DTC:V46_32:P0116 -> "P0116", DTC:BSI2010:B1137-02 -> "B1137-02".
+        # Раньше здесь была пустая строка, и metric_sql сваливался на coalesce(label),
+        # то есть в таблице и легенде было описание БЕЗ кода - непонятно, о чём речь.
+        return name.split(":", 2)[-1]
     d = DID_OF.get(name)
     from ru_labels import label as ru_label
     return ru_label(d, name) if d else short_label(name)
@@ -382,8 +383,12 @@ LATEST_SQL = (
 )
 
 
-def latest_table(pid, title, names, gh=16, gy=0):
-    """Таблица последних значений: для дискретных состояний это полезнее графика."""
+def latest_table(pid, title, names, gh=16, gy=0, metric=None):
+    """Таблица последних значений: для дискретных состояний это полезнее графика.
+
+    metric - своя SQL-колонка имени, если стандартной мало. Нужна кодам
+    неисправностей: там в одной колонке хочется и код, и описание.
+    """
     return {
         "id": pid,
         "type": "table",
@@ -393,7 +398,7 @@ def latest_table(pid, title, names, gh=16, gy=0):
         "targets": [{"refId": "A", "datasource": DS, "format": "table",
                      "rawQuery": True,
                      "rawSql": LATEST_SQL.format(names=sql_in(names),
-                                                metric=metric_sql(names))}],
+                                                metric=metric or metric_sql(names))}],
         "fieldConfig": {"defaults": {"custom": {"align": "auto"}}, "overrides": []},
         "options": {"showHeader": True, "footer": {"show": False},
                     "sortBy": [{"displayName": "Параметр", "desc": False}]},
@@ -905,22 +910,30 @@ def build():
     panels.append(hunt)
     pid += 1; y += 9
 
-    dtc = latest_table(pid, "Коды неисправностей двигателя, статус",
-                       [], gh=6, gy=y)
+    dtc = latest_table(pid, "Коды неисправностей: блок, код, состояние", [], gh=10, gy=y)
+    # Свой запрос вместо стандартного: нужны отдельные колонки "блок" и "код", иначе
+    # из имени DTC:BSI2010:B1137-02 на экран попадало только описание, и было
+    # непонятно, о каком коде речь. Ноль - кода сейчас нет, такие строки прячем.
     dtc["targets"][0]["rawSql"] = (
-        'SELECT coalesce(p.label, p.name) AS "Код и описание", l.value AS "Статус",\n'
+        'SELECT split_part(p.name, \':\', 2) AS "Блок",\n'
+        '       split_part(p.name, \':\', 3) AS "Код",\n'
+        '       CASE WHEN l.value::int & 1 = 1 THEN \'активна сейчас\'\n'
+        '            WHEN l.value::int & 8 = 8 THEN \'сохранена\'\n'
+        '            ELSE \'статус \' || l.value::int END AS "Состояние",\n'
+        '       coalesce(p.label, \'\') AS "Описание",\n'
         '       l.ts AS "Обновлено"\n'
         "FROM param p\n"
         "JOIN LATERAL (SELECT value, ts FROM reading WHERE param_id = p.id\n"
         "              ORDER BY ts DESC LIMIT 1) l ON true\n"
-        "WHERE p.name LIKE 'DTC:%'\n"
-        "ORDER BY 1"
+        "WHERE p.name LIKE 'DTC:%' AND l.value > 0\n"
+        "ORDER BY 3 DESC, 1, 2"
     )
     dtc["description"] = (
-        "Байт статуса кода неисправности. Бит 0 - неисправность АКТИВНА сейчас, "
-        "бит 3 - подтверждена и сохранена. Момент, когда P0116 из сохранённого "
-        "становится активным, и есть искомое событие. Пишется watch_coolant.py "
-        "раз в полминуты и dtc_read.py вручную."
+        "Байт статуса: бит 0 - неисправность активна ПРЯМО СЕЙЧАС, бит 3 - подтверждена "
+        "и сохранена в памяти блока. Поэтому 8 это история (было и записано), 9 это "
+        "8+1, то есть записано и происходит сейчас. Коды со статусом 0 (пропали) в "
+        "таблицу не попадают, их видно на графике истории. Суффикс у кода вида -02 - "
+        "тип отказа: обрыв, замыкание на массу, замыкание на плюс."
     )
     panels.append(dtc)
     pid += 1; y += 6
@@ -1059,7 +1072,7 @@ def build():
         panels.append(hist); pid += 1; y += 9
         gh = max(5, min(14, 3 + len(dtc_names)))
         panels.append(latest_table(pid, "Найденные коды: блок, описание, статус",
-                                   dtc_names, gh=gh, gy=y))
+                                   dtc_names, gh=gh, gy=y, metric="split_part(p.name, ':', 3) || ' · ' || coalesce(p.label, '')"))
         pid += 1
         y += gh
 
