@@ -13,10 +13,13 @@
 #     sudo ./mount-diagbox.sh --umount # отцепить
 #
 set -uo pipefail
-IMG="${IMG:-$HOME/Downloads/DiagBox_968_Free/Diagbox_968_Free.vmdk}"
 MNT="${MNT:-/mnt/diagbox}"
 DEV=/dev/nbd0
 RUN_AS="${SUDO_USER:-jaennil}"
+# ДОМАШНИЙ КАТАЛОГ ВЛАДЕЛЬЦА, не root: под sudo $HOME становится /root, и скрипт
+# искал образ в /root/Downloads. Берём каталог того, кто запустил sudo.
+HOME_DIR=$(getent passwd "$RUN_AS" | cut -d: -f6)
+IMG="${IMG:-$HOME_DIR/Downloads/DiagBox_968_Free/Diagbox_968_Free.vmdk}"
 
 [ "$(id -u)" = 0 ] || { echo "нужен root: sudo $0"; exit 1; }
 
