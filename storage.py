@@ -100,9 +100,16 @@ class Store:
             pid = cur.lastrowid
         else:
             pid = row[0]
-            # дозаполняем ярлык у баз, созданных до его появления
-            self.db.execute("UPDATE param SET label=? WHERE id=? AND (label IS NULL OR label='')",
-                            (lab, pid))
+            if label:
+                # Явный ярлык от вызывающего (описание кода неисправности) обновляем
+                # ВСЕГДА: описания уточняются - в сентябре 2026 их стало 370 вместо 54
+                # после разбора базы DSD.FDB, - и старый текст должен уступить новому.
+                self.db.execute("UPDATE param SET label=? WHERE id=? AND label IS NOT ?",
+                                (lab, pid, lab))
+            else:
+                # дозаполняем ярлык у баз, созданных до его появления
+                self.db.execute("UPDATE param SET label=? WHERE id=? AND (label IS NULL OR label='')",
+                                (lab, pid))
         self._ids[name] = pid
         return pid
 

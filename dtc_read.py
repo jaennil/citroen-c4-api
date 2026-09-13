@@ -121,10 +121,22 @@ def describe(code: str, failure, status, raw=None) -> str:
     # описания. Их немного - в бесплатном образе полной таблицы на 12 003 кода нет,
     # - но то, что есть, точнее любой догадки, потому берём в первую очередь.
     from dtc_names import NAMES
-    if raw and raw in NAMES:
-        parts.append(NAMES[raw])
-    elif code in KNOWN:
+    # Порядок источников от точного к приблизительному:
+    #   1. KNOWN - проверенные вручную описания кодов ЭТОЙ машины;
+    #   2. dtc_names - 54 записи из грубого скана образа, ключ по сырому коду;
+    #   3. dtc_names_ru - 370 описаний из базы DSD.FDB образа, переведённых с
+    #      французского по словарю терминов (gen_dtc_dsd.py + dtc_tr.py);
+    #   4. честная отсылка к DiagBox, если не нашлось нигде.
+    try:
+        from dtc_names_ru import DTC_RU
+    except ImportError:
+        DTC_RU = {}
+    if code in KNOWN:
         parts.append(KNOWN[code])
+    elif raw and raw in NAMES:
+        parts.append(NAMES[raw])
+    elif code in DTC_RU:
+        parts.append(DTC_RU[code])
     elif code[0] == "P" and code[1] == "0":
         parts.append("стандартный код двигателя, описание смотреть в DiagBox")
     else:
@@ -132,7 +144,6 @@ def describe(code: str, failure, status, raw=None) -> str:
     if failure is not None and failure in FAILURE:
         parts.append(FAILURE[failure])
     if status is not None:
-        # бит 0 - неисправность активна сейчас, бит 3 - подтверждена и сохранена
         flags = []
         if status & 0x01:
             flags.append("активна")

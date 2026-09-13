@@ -44,6 +44,7 @@ def descriptions(blob):
             # с конца всё, что не может закончить французскую фразу.
             s = re.sub(r"[^0-9A-Za-zàâäçéèêëîïôöùûüÿœÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸŒ%°)\].,;:'\"»+-]+$",
                        "", s).strip()
+            s = re.sub(r"(?<=[+\s)])[\u0080-\u024f]$", "", s).strip()
             if len(s) >= 8 and not s.isupper():
                 out.setdefault(code, s)
             break
