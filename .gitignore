@@ -12,3 +12,6 @@ drive.log
 switch.log
 ecu_req_index.json
 local/dashboards/citroen.json
+
+# промежуточный кэш выборки состояний, пересобирается за пару секунд
+states_raw.json
