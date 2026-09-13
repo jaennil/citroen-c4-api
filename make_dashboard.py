@@ -910,34 +910,6 @@ def build():
     panels.append(hunt)
     pid += 1; y += 9
 
-    dtc = latest_table(pid, "Коды неисправностей: блок, код, состояние", [], gh=10, gy=y)
-    # Свой запрос вместо стандартного: нужны отдельные колонки "блок" и "код", иначе
-    # из имени DTC:BSI2010:B1137-02 на экран попадало только описание, и было
-    # непонятно, о каком коде речь. Ноль - кода сейчас нет, такие строки прячем.
-    dtc["targets"][0]["rawSql"] = (
-        'SELECT split_part(p.name, \':\', 2) AS "Блок",\n'
-        '       split_part(p.name, \':\', 3) AS "Код",\n'
-        '       CASE WHEN l.value::int & 1 = 1 THEN \'активна сейчас\'\n'
-        '            WHEN l.value::int & 8 = 8 THEN \'сохранена\'\n'
-        '            ELSE \'статус \' || l.value::int END AS "Состояние",\n'
-        '       coalesce(p.label, \'\') AS "Описание",\n'
-        '       l.ts AS "Обновлено"\n'
-        "FROM param p\n"
-        "JOIN LATERAL (SELECT value, ts FROM reading WHERE param_id = p.id\n"
-        "              ORDER BY ts DESC LIMIT 1) l ON true\n"
-        "WHERE p.name LIKE 'DTC:%' AND l.value > 0\n"
-        "ORDER BY 3 DESC, 1, 2"
-    )
-    dtc["description"] = (
-        "Байт статуса: бит 0 - неисправность активна ПРЯМО СЕЙЧАС, бит 3 - подтверждена "
-        "и сохранена в памяти блока. Поэтому 8 это история (было и записано), 9 это "
-        "8+1, то есть записано и происходит сейчас. Коды со статусом 0 (пропали) в "
-        "таблицу не попадают, их видно на графике истории. Суффикс у кода вида -02 - "
-        "тип отказа: обрыв, замыкание на массу, замыкание на плюс."
-    )
-    panels.append(dtc)
-    pid += 1; y += 6
-
     # Отношение обороты/скорость. Передачу BSI не отдаёт: на механике датчика
     # нет, и "положение селектора" стоит нулём во всех замерах (расшифровки в
     # базе - ASCII P/R/N/D, то есть параметр для автомата). Зато отношение
@@ -1057,22 +1029,52 @@ def build():
         # пишет ноль тем кодам, которых в ответе нет, поэтому это настоящий временной
         # ряд - видно, когда код появился и когда ушёл, и можно класть рядом с
         # температурой или оборотами, чтобы искать совпадения.
-        hist = panel(pid, "История кодов: когда появлялись и уходили", 0, y, 24, 9,
-                     [target(dtc_names)], "", kind="state-timeline")
+        # В полосу берём только коды, которые МЕНЯЛИСЬ или хоть раз были активны:
+        # 65 строк, из которых 55 неподвижная история блока BSI, читать невозможно.
+        # Полный список - в таблице ниже.
+        lively = [n for n in dtc_names
+                  if STATS.get(n, (0, 0, 0))[1] > 1 or int(STATS.get(n, (0, 0, 0))[2] or 0) & 1]
+        lively = lively or dtc_names
+        gh_hist = max(8, min(24, 3 + len(lively)))
+        hist = panel(pid, "История кодов: когда появлялись и уходили", 0, y, 24, gh_hist,
+                     [target(lively)], "", kind="state-timeline")
         hist["fieldConfig"]["defaults"]["mappings"] = enums.mappings("DTC:x")
         hist["fieldConfig"]["defaults"]["custom"] = {"fillOpacity": 70, "lineWidth": 0}
         hist["options"] = {"showValue": "auto", "mergeValues": True, "rowHeight": 0.85,
                            "legend": {"showLegend": True, "displayMode": "list",
                                       "placement": "bottom"},
                            "tooltip": {"mode": "single", "sort": "none"}}
-        hist["description"] = ("Значение - байт статуса, ноль значит кода нет. Служба "
+        hist["description"] = ("Служба "
                                "читает коды двигателя раз в 5 минут, остальные блоки раз в "
                                "четверть часа, и все блоки сразу при подключении Lexia - "
                                "так что даже в короткой поездке коды снимаются.")
-        panels.append(hist); pid += 1; y += 9
-        gh = max(5, min(14, 3 + len(dtc_names)))
-        panels.append(latest_table(pid, "Найденные коды: блок, описание, статус",
-                                   dtc_names, gh=gh, gy=y, metric="split_part(p.name, ':', 3) || ' · ' || coalesce(p.label, '')"))
+        panels.append(hist); pid += 1; y += gh_hist
+        gh = max(6, min(16, 3 + len(dtc_names)))
+        # Единственная таблица на дашборде, где текст важнее графика: у кода есть
+        # описание, а его в линию не нарисуешь. Состояние - словами, без битовых
+        # масок: владельцу не надо помнить, что 9 это "8 плюс 1".
+        tbl = latest_table(pid, "Какие коды сейчас записаны", [], gh=gh, gy=y)
+        tbl["targets"][0]["rawSql"] = (
+            'SELECT split_part(p.name, \':\', 2) AS "Блок",\n'
+            '       split_part(p.name, \':\', 3) AS "Код",\n'
+            '       CASE WHEN l.value::int & 1 = 1 THEN \'происходит сейчас\'\n'
+            '            WHEN l.value::int & 8 = 8 THEN \'записана, сейчас нет\'\n'
+            '            ELSE \'редкий статус \' || l.value::int END AS "Состояние",\n'
+            '       coalesce(p.label, \'\') AS "Что это",\n'
+            '       l.ts AS "Прочитано"\n'
+            "FROM param p\n"
+            "JOIN LATERAL (SELECT value, ts FROM reading WHERE param_id = p.id\n"
+            "              ORDER BY ts DESC LIMIT 1) l ON true\n"
+            "WHERE p.name LIKE 'DTC:%' AND l.value > 0\n"
+            "ORDER BY 3, 1, 2"
+        )
+        tbl["description"] = (
+            "Коды, которые сейчас лежат в памяти блоков. Пропавшие сюда не попадают, "
+            "их видно на графике истории выше. Суффикс у кода вида -02 это тип отказа: "
+            "обрыв, замыкание на массу, замыкание на плюс - у PSA это разные "
+            "неисправности с одним номером."
+        )
+        panels.append(tbl)
         pid += 1
         y += gh
 
