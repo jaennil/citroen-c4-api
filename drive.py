@@ -105,7 +105,7 @@ def read_dtc(lex, tx, rx, info, store):
         # схлопывались в одну строку и затирали друг друга.
         return f"DTC:{info['fam']}:{c}" + (f"-{f:02X}" if f is not None else "")
 
-    rows = [(0, key(c, f), "статус", float(st), describe(c, f, st, rw))
+    rows = [(0, key(c, f), "статус", float(st), describe(c, f, st, rw, info["fam"]))
             for c, f, st, rw in codes]
     seen = {key(c, f) for c, f, _, _ in codes}
     # известные коды этого блока, которых сейчас нет - ноль, "кода нет"

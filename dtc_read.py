@@ -34,6 +34,7 @@
 
 import argparse
 import logging
+import re
 import sys
 import time
 
@@ -115,7 +116,49 @@ def raw_hex(hi: int, lo: int, extra=None) -> str:
     return s + (f"{extra:02X}" if extra is not None else "")
 
 
-def describe(code: str, failure, status, raw=None) -> str:
+# Вводные слова, которыми блоки по-разному начинают одну и ту же формулировку:
+# "Отсутствие связи с BSI" и "ошибка: отсутствие связи с BSI" - это один текст.
+_LEAD = re.compile(r"^\s*(ошибка|дефект|неисправность)\s*[-:]?\s*", re.I)
+
+
+def _norm_desc(v):
+    """Ключ сравнения описаний: без вводного слова, регистра и знаков."""
+    return re.sub(r"[^\w\s]", "", _LEAD.sub("", v)).strip().lower()
+
+
+def _gpc(code, fam):
+    """Описание из GPC.FDB, привязанное к исполнению блока (gen_dtc_gpc.py).
+
+    Сначала ищем у того блока, из которого код прочитан. Если там его нет - блок
+    ЗЕРКАЛИТ чужой код: BSI отдаёт и P0116 двигателя, и C1205 насоса ГУР, хотя в
+    его собственном списке из 458 кодов их нет. Тогда берём описание у блоков, где
+    этот код есть, и голосуем: обычно все формулируют одно и то же разными словами
+    ("отсутствие связи с BSI"). Если расхождение настоящее - показываем оба
+    варианта через "/", а не выбираем наугад.
+    """
+    try:
+        from dtc_gpc_ru import DTC_GPC
+    except ImportError:
+        return None
+    if fam and f"{fam}:{code}" in DTC_GPC:
+        return DTC_GPC[f"{fam}:{code}"]
+    others = [v for k, v in DTC_GPC.items() if k.split(":", 1)[1] == code]
+    if not others:
+        return None
+    from collections import Counter
+    votes = Counter(_norm_desc(v) for v in others)
+    top = votes.most_common()
+    if len(top) == 1 or top[0][1] > top[1][1]:
+        return next(v for v in others if _norm_desc(v) == top[0][0])
+    seen, uniq = set(), []
+    for v in others:
+        if _norm_desc(v) not in seen:
+            seen.add(_norm_desc(v))
+            uniq.append(v)
+    return " / ".join(uniq[:2])
+
+
+def describe(code: str, failure, status, raw=None, fam=None) -> str:
     parts = []
     # Словарь, вытащенный из образа DiagBox (см. gen_dtc_names.py): 54 заводских
     # описания. Их немного - в бесплатном образе полной таблицы на 12 003 кода нет,
@@ -123,16 +166,23 @@ def describe(code: str, failure, status, raw=None) -> str:
     from dtc_names import NAMES
     # Порядок источников от точного к приблизительному:
     #   1. KNOWN - проверенные вручную описания кодов ЭТОЙ машины;
-    #   2. dtc_names - 54 записи из грубого скана образа, ключ по сырому коду;
-    #   3. dtc_names_ru - 370 описаний из базы DSD.FDB образа, переведённых с
-    #      французского по словарю терминов (gen_dtc_dsd.py + dtc_tr.py);
-    #   4. честная отсылка к DiagBox, если не нашлось нигде.
+    #   2. dtc_gpc_ru - 1229 описаний из GPC.FDB, привязанных к исполнению НАШЕГО
+    #      блока (gen_dtc_gpc.py). Точнее всех остальных каталожных источников
+    #      именно из-за привязки, и текст сразу русский;
+    #   3. dtc_names - 54 записи из грубого скана образа, ключ по сырому коду;
+    #   4. dtc_names_ru - 370 описаний из базы DSD.FDB образа, переведённых с
+    #      французского по словарю терминов (gen_dtc_dsd.py + dtc_tr.py); без
+    #      привязки к блоку, поэтому ниже приоритетом;
+    #   5. честная отсылка к DiagBox, если не нашлось нигде.
     try:
         from dtc_names_ru import DTC_RU
     except ImportError:
         DTC_RU = {}
+    gpc = _gpc(code, fam)
     if code in KNOWN:
         parts.append(KNOWN[code])
+    elif gpc:
+        parts.append(gpc)
     elif raw and raw in NAMES:
         parts.append(NAMES[raw])
     elif code in DTC_RU:
