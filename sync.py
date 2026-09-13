@@ -126,6 +126,20 @@ def main():
                 "INSERT INTO norm_zone(name, title, lo, hi, zone) VALUES (%s,%s,%s,%s,%s)",
                 [(z["name"], z["title"], z["lo"], z["hi"], z["zone"]) for z in red_zones()])
         conn.commit()
+        # Ярлыки параметров - целиком, каждый раз. Они уточняются отдельно от замеров
+        # (описания кодов выросли с 54 до 370 после разбора базы DiagBox), а обычная
+        # досылка трогает только строки с новыми значениями: если новых замеров нет,
+        # исправленный текст в кластер не попадёт никогда.
+        labels = [(lab, did) for did, lab in store.db.execute(
+            "SELECT did, label FROM param WHERE label IS NOT NULL AND label <> ''")]
+        if labels:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "UPDATE param SET label = %s WHERE did = %s AND label IS DISTINCT FROM %s",
+                    [(l, d, l) for l, d in labels])
+            conn.commit()
+            log.info(f"  ярлыков сверено: {len(labels)}")
+
         # расписание обслуживания - целиком, каждый раз: строк единицы, а правки
         # (сделали ТО, уточнили интервал) должны доезжать без отдельного флага
         rows = store.maintenance_all()
