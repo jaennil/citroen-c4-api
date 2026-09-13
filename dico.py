@@ -26,6 +26,8 @@ import struct
 import sys
 
 MOUNT = "/mnt/diagbox"
+# Локальные копии словарей: образ нужен только в первый раз.
+LOCAL = os.path.expanduser("~/life/citroen/diagbox-db")
 FILES = {
     "POLUXDATA": (f"{MOUNT}/AWRoot/dtrd/trans/POLUXDATAru_RU.DU8", "utf-8", False),
     "POLUXDATA_EN": (f"{MOUNT}/AWRoot/dtrd/trans/POLUXDATAen_GB.DU8", "utf-8", False),
@@ -73,14 +75,32 @@ class Dico:
 
 
 def open_dico(name="POLUXDATA"):
+    """Словарь из локальной копии, иначе из смонтированного образа.
+
+    Образ цепляется через sudo и после перезагрузки отваливается, а словари нужны
+    постоянно - поэтому при первом удачном открытии файл копируется рядом с базами
+    (`~/life/citroen/diagbox-db`), и дальше образ уже не нужен.
+    """
     path, enc, zero = FILES[name]
-    return Dico(path, enc, zero)
+    local = os.path.join(LOCAL, os.path.basename(path))
+    if os.path.exists(local):
+        return Dico(local, enc, zero)
+    d = Dico(path, enc, zero)
+    try:
+        os.makedirs(LOCAL, exist_ok=True)
+        with open(local, "wb") as f:
+            f.write(d.d)
+    except OSError:
+        pass          # копия это удобство, а не условие работы
+    return d
 
 
 def main():
     if "--list" in sys.argv:
         for name, (path, enc, _) in FILES.items():
-            ok = os.path.exists(path)
+            local = os.path.join(LOCAL, os.path.basename(path))
+            ok = os.path.exists(local) or os.path.exists(path)
+            path = local if os.path.exists(local) else path
             n = len(open_dico(name)) if ok else 0
             print(f"  {name:14} {'есть' if ok else 'НЕТ '} строк {n:7} {enc:7} {path}")
         return 0
