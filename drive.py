@@ -88,7 +88,7 @@ def read_dtc(lex, tx, rx, info, store):
     редкие точки вместо ряда: не видно ни когда код появился, ни когда ушёл, и
     корреляцию с температурой или оборотами не построить.
     """
-    from dtc_read import describe, read_block
+    from dtc_read import describe, key as dtc_key, read_block
     codes, raw, ok = read_block(lex, tx, rx)
     if not ok:
         # Блок промолчал или отказал. НИЧЕГО не пишем: раньше сюда попадало молчание
@@ -102,8 +102,10 @@ def read_dtc(lex, tx, rx, info, store):
     def key(c, f):
         # Тип отказа - часть кода, а не украшение: у PSA B1137 с типами 01/02/04 это
         # три разные неисправности (обрыв, замыкание на массу, на плюс). Без него они
-        # схлопывались в одну строку и затирали друг друга.
-        return f"DTC:{info['fam']}:{c}" + (f"-{f:02X}" if f is not None else "")
+        # схлопывались в одну строку и затирали друг друга. Имя строит dtc_read.key,
+        # общий для службы и ручного dtc_read.py - раньше схемы расходились, и
+        # ручной путь писал по нескольку замеров с одним именем и временем.
+        return dtc_key(info["fam"], c, f)
 
     rows = [(0, key(c, f), "статус", float(st), describe(c, f, st, rw, info["fam"]))
             for c, f, st, rw in codes]

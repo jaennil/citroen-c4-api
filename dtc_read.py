@@ -158,6 +158,18 @@ def _gpc(code, fam):
     return " / ".join(uniq[:2])
 
 
+def key(fam: str, code: str, failure) -> str:
+    """Имя параметра для одного кода. ОДНО на все пути записи.
+
+    Тип отказа обязан быть в имени: один код приходит с несколькими типами
+    (B1228 - с пятью), и без суффикса они схлопываются в одну строку, а при записи
+    дают несколько замеров с одним именем и одним временем. Какой из них попадёт
+    на график - лотерея, причём статусы у них разные (8 и 9), то есть код может
+    показаться сохранённым, хотя один из его типов активен.
+    """
+    return f"DTC:{fam}:{code}" + (f"-{failure:02X}" if failure is not None else "")
+
+
 def describe(code: str, failure, status, raw=None, fam=None) -> str:
     parts = []
     # Словарь, вытащенный из образа DiagBox (см. gen_dtc_names.py): 54 заводских
@@ -274,8 +286,8 @@ def main():
                 # Код как параметр: имя DTC:<блок>:<код>, значение - байт статуса,
                 # ярлык - описание. Так он попадает в Grafana обычной таблицей, без
                 # отдельной схемы, а история статусов остаётся видна во времени.
-                store.write([(0, f"DTC:{info['fam']}:{c}", "статус", float(st),
-                              describe(c, f, st, rw))
+                store.write([(0, key(info["fam"], c, f), "статус", float(st),
+                              describe(c, f, st, rw, info["fam"]))
                              for c, f, st, rw in codes], ts=time.time())
             for code, failure, status, raw_code in codes:
                 fail = f" тип {failure:02X}" if failure is not None else ""
