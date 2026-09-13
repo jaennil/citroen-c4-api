@@ -313,19 +313,35 @@ def _lost(t):
     return hits.pop() if len(hits) == 1 else None
 
 
-def tr(text):
+# Одно французское слово в разных параметрах значит разное. "Verrouillé" у двери это
+# "заперто", у двигателя - "заблокирован" (иммобилайзер). Словарь фраз такое не ловит,
+# поэтому здесь точечные поправки по мнемонике параметра. Ключ - перевод по общему
+# словарю, значение - уточнённый: исходник в базе пишется по-разному ("Verrouillé",
+# "Verrouille", "Verrouill?"), а перевод у всех вариантов уже один.
+CONTEXT = {
+    "MP_ETAT_MOTEUR_THERMIQUE_1_2": {"заперто": "заблокирован"},
+    "CA_ETAT_MOTEUR_THERMIQUE_a": {"заперто": "заблокирован"},
+}
+
+
+def _ctx(ru, param):
+    """Уточнение перевода по смыслу конкретного параметра."""
+    return CONTEXT.get((param or "").split(":")[-1], {}).get(ru, ru)
+
+
+def tr(text, param=None):
     """Перевод одного текста. None - перевода нет, оставить французский."""
     t = text.strip()
     if t in TR:
-        return TR[t]
+        return _ctx(TR[t], param)
     lost = _lost(t)
     if lost:
-        return lost
+        return _ctx(lost, param)
     if t.isdigit():                       # чистые номера состояний оставляем как есть
         return t
     for p, ru in PREFIX.items():
         if t.startswith(p) and t[len(p):].strip():
-            return ru + t[len(p):].strip()
+            return _ctx(ru + t[len(p):].strip(), param)
     return None
 
 
@@ -347,7 +363,7 @@ def main():
     for key, states in states_fr.STATES.items():
         ru = {}
         for v, text in states.items():
-            r = tr(text)
+            r = tr(text, key)
             if r is None:
                 left.add(text)
                 r = text                  # честнее оставить французский, чем выдумать
