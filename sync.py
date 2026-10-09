@@ -53,6 +53,12 @@ BEGIN
         ALTER SEQUENCE param_id_seq AS integer MAXVALUE 2147483647;
     END IF;
 END $$;
+-- Когда строка доехала до кластера. Алерты смотрят окно по нему, а не по ts:
+-- поездка без интернета приезжает часами позже, и окно "ts за 30 минут" её
+-- пропускало целиком - красная зона в такой поездке не давала алерта никогда.
+-- Старые строки получают время миграции, это безвредно: окно его быстро минует.
+ALTER TABLE reading ADD COLUMN IF NOT EXISTS received_at timestamptz NOT NULL DEFAULT now();
+CREATE INDEX IF NOT EXISTS idx_reading_param_recv ON reading (param_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reading_param_ts ON reading (param_id, ts DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reading_dedup ON reading (param_id, ts);
 CREATE TABLE IF NOT EXISTS event (
